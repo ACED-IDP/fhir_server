@@ -6,4 +6,4 @@ import pytest
 @pytest.fixture
 def python_source_directories() -> List[str]:
     """Directories to scan with flake8."""
-    return ["fhir_server", "tests"]
+    return ["bundle_service", "tests"]

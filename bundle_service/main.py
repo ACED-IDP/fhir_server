@@ -152,7 +152,6 @@ async def post__bundle(
     if status_code == 201:
         headers["Location"] = f"https://aced-idp.org/Bundle/{response.id}"
 
-
     return JSONResponse(
         content=response.dict(), status_code=status_code, headers=headers
     )

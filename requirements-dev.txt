@@ -1,0 +1,8 @@
+pytest
+flake8
+black
+wheel
+twine
+
+# fastapi-code-generator
+# httpx
