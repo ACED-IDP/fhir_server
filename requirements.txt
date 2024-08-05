@@ -24,11 +24,8 @@ joblib
 # html parsing (urn:oid lookups)
 beautifulsoup4
 
-# postgres
-psycopg2-binary
-
-# AWS version of ES curl http://$ELASTICSEARCH_SERVICE_HOST:$ELASTICSEARCH_SERVICE_PORT
-elasticsearch<7.14.0
+# modern plug compatible with elasticsearch
+opensearch-py==2.4.2
 
 # gdc
 dictionaryutils
@@ -36,4 +33,3 @@ gen3datamodel<3.0.2
 
 fastapi
 uvicorn[standard]
-iceberg-tools
