@@ -1,0 +1,39 @@
+# CLI processor
+click
+# faster json
+orjson
+# pluralization, etc.
+inflection
+# Gen3 SDK
+gen3
+# FHIR model
+fhir.resources
+# json web token
+PyJWT
+# for mime types
+python-magic
+# progress bar
+tqdm
+# http API
+requests
+# modern python dataclasses
+pydantic
+
+# function caching
+joblib
+# html parsing (urn:oid lookups)
+beautifulsoup4
+
+# postgres
+psycopg2-binary
+
+# AWS version of ES curl http://$ELASTICSEARCH_SERVICE_HOST:$ELASTICSEARCH_SERVICE_PORT
+elasticsearch<7.14.0
+
+# gdc
+dictionaryutils
+gen3datamodel<3.0.2
+
+fastapi
+uvicorn[standard]
+iceberg-tools
