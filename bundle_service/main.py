@@ -4,6 +4,8 @@ from __future__ import annotations
 import uuid
 from typing import Optional, Any
 
+from pydantic.v1.types import Json
+
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 
@@ -12,7 +14,13 @@ import logging
 from fhir.resources.bundle import Bundle, BundleEntry, BundleEntryResponse
 from fhir.resources.operationoutcome import OperationOutcome, OperationOutcomeIssue
 
+from bundle_service.processing.process_bundle import process
+
 logger = logging.getLogger(__name__)
+
+"""Bundle submission should be less than 50 MB
+see https://cloud.google.com/healthcare-api/quotas"""
+MAX_REQUEST_SIZE = 50 * 1024 * 1024
 
 valid_resource_types = [
     "ResearchStudy",
@@ -128,7 +136,10 @@ async def post__bundle(
     outcome = validate_bundle(body_dict, authorization)
 
     # validate each entry in the bundle
-    response_entries = validate_bundle_entries(body_dict)
+    response_entries, valid_fhir_rows = validate_bundle_entries(body_dict)
+
+    #get the project id from the bundle
+    project_id = body_dict["identifier"]["value"]
 
     # set status code
     status_code = 201
@@ -142,7 +153,14 @@ async def post__bundle(
         if len([_.code for _ in outcome.issue if _.code == "security"]):
             status_code = 401
 
+    # Check body size.TODO: figure out how to integrate this into bundle validation
+    if body.headers.get('Content-Length') > MAX_REQUEST_SIZE:
+       status_code = 422
+
+
     # TODO process each entry in the bundle, save request_bundle
+    process(valid_fhir_rows, project_id, access_token)
+
     response = Bundle(
         type="transaction-response", entry=response_entries, issues=outcome
     )
@@ -183,11 +201,12 @@ def validate_entry(request_entry: BundleEntry) -> OperationOutcomeIssue:
     )
 
 
-def validate_bundle_entries(body: dict) -> list[BundleEntry]:
+def validate_bundle_entries(body: dict) -> list[BundleEntry] | list[dict]:
     """Ensure bundle entries are valid for our use case, Messages relating to the processing of individual entries (e.g. in a batch or transaction) SHALL be reported in the entry.response.outcome for that entry.
     https://hl7.org/fhir/R5/bundle-definitions.html#Bundle.issues
     raise HTTPException if not"""
 
+    valid_fhir_rows = []
     response_entries = []
     request_entries = body.get("entry", [])
     for entry_dict in request_entries:
@@ -197,6 +216,8 @@ def validate_bundle_entries(body: dict) -> list[BundleEntry]:
         response_entry = BundleEntry()
         response_issue = validate_entry(request_entry)
         if response_issue.severity == "success":
+            # If entry passes validation, add it to submission row list
+            valid_fhir_rows.append(entry_dict)
             response_status = "200"
         else:
             response_status = "422"
@@ -204,7 +225,7 @@ def validate_bundle_entries(body: dict) -> list[BundleEntry]:
         response_entry.response.outcome = OperationOutcome(issue=[response_issue])
         response_entries.append(response_entry)
 
-    return response_entries
+    return response_entries, valid_fhir_rows
 
 
 def validate_bundle(body: dict, authorization: str) -> OperationOutcome:
