@@ -33,7 +33,7 @@ VALID_PATIENT = {
 VALID_REQUEST_BUNDLE = {
     "resourceType": "Bundle",
     "type": "transaction",
-    "identifier": {"system": "https://aced-idp.org/project_id", "value": "test-foo"},
+    "identifier": {"system": "https://aced-idp.org/project_id", "value": "ohsu-ESCA"},
     "entry": [
         {
             "resource": None,

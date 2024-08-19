@@ -4,8 +4,8 @@ import subprocess
 import os
 from typing import List
 
-from aced_submission.grip_load import bulk_add
-from aced_submission.meta_flat_load import DEFAULT_ELASTIC, load_flat, bulk_delete
+from aced_submission.grip_load import bulk_add, bulk_delete
+from aced_submission.meta_flat_load import DEFAULT_ELASTIC, load_flat
 from aced_submission.fhir_store import fhir_put
 from gen3_tracker.meta.dataframer import LocalFHIRDatabase
 
@@ -27,13 +27,12 @@ async def process(rows: List[dict], project_id: str, access_token: str):
     delete_body = {"graph": "CALIPER", "edges":[], "vertices": []}
     files_written = False
     with tempfile.TemporaryDirectory() as temp_dir:
-        delete_file = open(os.path.join(temp_dir, "delete.json"), mode='a+')
         for row in rows:
             if row["request"]["method"] == "PUT":
                 file_name = row["resource"]["resourceType"] + ".ndjson"
                 if file_name not in temp_files:
                     temp_file_path = os.path.join(temp_dir, file_name)
-                    temp_files[file_name] = open(temp_file_path, mode='a+')
+                    temp_files[file_name] = open(temp_file_path, mode='ab+')
                 temp_files[file_name].write(orjson.dumps(row["resource"], option=orjson.OPT_APPEND_NEWLINE))
                 files_written = True
             elif row["request"]["method"] == "DELETE":
@@ -41,12 +40,19 @@ async def process(rows: List[dict], project_id: str, access_token: str):
 
 
         if len(delete_body["edges"]) > 0 or len(delete_body["vertices"]) > 0:
-            bulk_delete("CALIPER", project_id=project_id, vertices=delete_body["vertices"],
+            res = bulk_delete("CALIPER", project_id=project_id, vertices=delete_body["vertices"],
                         edges=delete_body["edges"], output=logs, access_token=access_token)
+
+            # TODO add elastic edge level deletion
+            ## take row ids, fetch records into RAM, for each index do a dataframe pivot,
+            ## delete resulting entries from each index depending on what the pivot produces
+
+        for temp_file in temp_files.values():
+            temp_file.close()
 
         if files_written:
             subprocess.run(["jsonschemagraph", "gen-dir", "iceberg/schemas/graph", f"{temp_dir}", f"{temp_dir}/OUT","--project_id", f"{project_id}","--gzip_files"])
-            bulk_add("CALIPER", project_id, f"{temp_dir}/OUT", logs)
+            res = bulk_add("CALIPER", project_id, f"{temp_dir}/OUT", logs, access_token)
 
             db = LocalFHIRDatabase(db_name=temp_dir)
             db.load_ndjson_from_dir(path=temp_dir)
@@ -68,7 +74,3 @@ async def process(rows: List[dict], project_id: str, access_token: str):
 
             logs = fhir_put(project_id, path=temp_dir,
                             elastic_url=DEFAULT_ELASTIC)
-
-
-            for temp_file in temp_files.values():
-                temp_file.close()

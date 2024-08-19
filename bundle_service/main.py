@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import uuid
 from typing import Optional, Any
+import numpy as np
+import re
 
 from pydantic.v1.types import Json
 
@@ -15,13 +17,14 @@ from fhir.resources.bundle import Bundle, BundleEntry, BundleEntryResponse
 from fhir.resources.operationoutcome import OperationOutcome, OperationOutcomeIssue
 
 from bundle_service.processing.process_bundle import process
+from gen3_tracker.meta import parse_obj
 
 logger = logging.getLogger(__name__)
-
 """Bundle submission should be less than 50 MB
 see https://cloud.google.com/healthcare-api/quotas"""
 MAX_REQUEST_SIZE = 50 * 1024 * 1024
 
+UUID_PATTERN = re.compile(r'^[\da-f]{8}-([\da-f]{4}-){3}[\da-f]{12}$', re.IGNORECASE)
 valid_resource_types = [
     "ResearchStudy",
     "Patient",
@@ -136,10 +139,9 @@ async def post__bundle(
     outcome = validate_bundle(body_dict, authorization)
 
     # validate each entry in the bundle
-    response_entries, valid_fhir_rows = validate_bundle_entries(body_dict)
+    response_entries, valid_fhir_rows, project_id = validate_bundle_entries(body_dict)
 
-    #get the project id from the bundle
-    project_id = body_dict["identifier"]["value"]
+    #get the project id from the bundle. If bundle is invalid, project_id will not exist
 
     # set status code
     status_code = 201
@@ -154,12 +156,15 @@ async def post__bundle(
             status_code = 401
 
     # Check body size.TODO: figure out how to integrate this into bundle validation
-    if body.headers.get('Content-Length') > MAX_REQUEST_SIZE:
+    # Assuming that Content-Length will always be present in request
+    req_size = body.headers.get('Content-Length')
+    if req_size.isdigit() and int(req_size) > MAX_REQUEST_SIZE:
        status_code = 422
 
 
     # TODO process each entry in the bundle, save request_bundle
-    process(valid_fhir_rows, project_id, access_token)
+    if project_id:
+        await process(valid_fhir_rows, project_id, authorization)
 
     response = Bundle(
         type="transaction-response", entry=response_entries, issues=outcome
@@ -208,8 +213,20 @@ def validate_bundle_entries(body: dict) -> list[BundleEntry] | list[dict]:
 
     valid_fhir_rows = []
     response_entries = []
+
     request_entries = body.get("entry", [])
     for entry_dict in request_entries:
+
+        ## Validate the actual resource itself in the obj ?
+        res = parse_obj(entry_dict["resource"])
+        print("RES: ", res)
+        res2 = parse_obj(entry_dict)
+
+        if body["resource"]["id"] is None or  not bool(UUID_PATTERN.match(body["resource"]["id"])):
+            # figure out how to do a return state for this
+            pass
+
+
         request_entry = BundleEntry(
             **entry_dict
         )  # TODO - this can be invalid, capture issue
@@ -225,7 +242,7 @@ def validate_bundle_entries(body: dict) -> list[BundleEntry] | list[dict]:
         response_entry.response.outcome = OperationOutcome(issue=[response_issue])
         response_entries.append(response_entry)
 
-    return response_entries, valid_fhir_rows
+    return response_entries, valid_fhir_rows, body.get("identifier", {}).get("value", None)
 
 
 def validate_bundle(body: dict, authorization: str) -> OperationOutcome:
