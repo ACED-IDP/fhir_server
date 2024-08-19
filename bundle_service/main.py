@@ -3,10 +3,7 @@ from __future__ import annotations
 
 import uuid
 from typing import Optional, Any
-import numpy as np
 import re
-
-from pydantic.v1.types import Json
 
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
@@ -141,7 +138,7 @@ async def post__bundle(
     # validate each entry in the bundle
     response_entries, valid_fhir_rows, project_id = validate_bundle_entries(body_dict)
 
-    #get the project id from the bundle. If bundle is invalid, project_id will not exist
+    # get the project id from the bundle. If bundle is invalid, project_id will not exist
 
     # set status code
     status_code = 201
@@ -159,12 +156,10 @@ async def post__bundle(
     # Assuming that Content-Length will always be present in request
     req_size = body.headers.get('Content-Length')
     if req_size.isdigit() and int(req_size) > MAX_REQUEST_SIZE:
-       status_code = 422
-
+        status_code = 422
 
     if len(outcome.issue) == 0:
         result = await process(valid_fhir_rows, project_id, authorization)
-
 
     response = Bundle(
         type="transaction-response", entry=response_entries, issues=outcome
@@ -225,7 +220,7 @@ def validate_bundle_entries(body: dict) -> list[BundleEntry] | list[dict]:
     request_entries = body.get("entry", [])
     for entry_dict in request_entries:
 
-        ## Validate the actual resource itself in the obj ?
+        # Validate the actual resource itself in the obj ?
         res = parse_obj(entry_dict["resource"])
 
         request_entry = BundleEntry(
@@ -321,7 +316,6 @@ def validate_bundle(body: dict, authorization: str) -> OperationOutcome:
                 diagnostics="Bundle identifier project id not in the from 'str-str'",
              )
         )
-
 
     _ = body.get("entry", None)
     if _ is None or _ == []:
