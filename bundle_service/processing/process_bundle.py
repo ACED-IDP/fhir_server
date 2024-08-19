@@ -57,11 +57,8 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> bool:
             if int(res[0]["status"]) != 200:
                 return False
 
-
             try:
-                if os.path.exists("local_fhir.db"):
-                    os.unlink("local_fhir.db")
-                db = LocalFHIRDatabase(db_name="local_fhir.db")
+                db = LocalFHIRDatabase(db_name=f"{temp_dir}/local_fhir.db")
                 db.load_ndjson_from_dir(path=temp_dir)
 
                 load_flat(project_id=project_id, index='researchsubject',

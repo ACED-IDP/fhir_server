@@ -162,8 +162,7 @@ async def post__bundle(
        status_code = 422
 
 
-    # TODO process each entry in the bundle, save request_bundle
-    if project_id:
+    if len(outcome.issue) == 0:
         result = await process(valid_fhir_rows, project_id, authorization)
 
 
@@ -189,6 +188,14 @@ def validate_entry(request_entry: BundleEntry) -> OperationOutcomeIssue:
             code="invariant",
             diagnostics=f"Invalid entry.method {request_entry.request.method} for entry {request_entry.fullUrl}, must be PUT or DELETE",
         )
+
+    request_resource_id = request_entry.resource.id
+    if request_resource_id is None or not bool(UUID_PATTERN.match(request_resource_id)):
+        return OperationOutcomeIssue(
+                severity="error",
+                code="invariant", diagnostics="Resource missing id"
+        )
+
     resource_type = request_entry.resource.resource_type
     if resource_type not in valid_resource_types:
         return OperationOutcomeIssue(
@@ -220,13 +227,6 @@ def validate_bundle_entries(body: dict) -> list[BundleEntry] | list[dict]:
 
         ## Validate the actual resource itself in the obj ?
         res = parse_obj(entry_dict["resource"])
-        print("RES: ", res)
-        res2 = parse_obj(entry_dict)
-
-        if entry_dict["resource"]["id"] is None or  not bool(UUID_PATTERN.match(entry_dict["resource"]["id"])):
-            # figure out how to do a return state for this
-            pass
-
 
         request_entry = BundleEntry(
             **entry_dict
@@ -305,7 +305,7 @@ def validate_bundle(body: dict, authorization: str) -> OperationOutcome:
         and identifier.get("system", None) == "https://aced-idp.org/project_id"
     ):
         project_id = identifier.get("value", None)
-    if not project_id:
+    if project_id is None:
         outcome.issue.append(
             OperationOutcomeIssue(
                 severity="error",
@@ -313,6 +313,15 @@ def validate_bundle(body: dict, authorization: str) -> OperationOutcome:
                 diagnostics="Bundle missing identifier https://aced-idp.org/project_id",
             )
         )
+    if project_id is not None and len(project_id.split("-")) != 2:
+        outcome.issue.append(
+            OperationOutcomeIssue(
+                severity="error",
+                code="required",
+                diagnostics="Bundle identifier project id not in the from 'str-str'",
+             )
+        )
+
 
     _ = body.get("entry", None)
     if _ is None or _ == []:

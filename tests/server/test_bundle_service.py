@@ -12,6 +12,7 @@ ACCESS_TOKEN = os.environ.get('ACCESS_TOKEN', None)
 HEADERS = {"Authorization": f"{ACCESS_TOKEN}"}
 
 VALID_CLAIM = {
+    "id": "b7793c1a-690e-5b7b-8b5b-867555936d06",
     "resourceType": "Claim",
     "status": "active",
     "created": "2014-08-16",
@@ -30,7 +31,7 @@ VALID_CLAIM = {
 VALID_PATIENT = {
     "id": "b7793c1a-690e-5b7b-8b5b-867555936d06",
     "resourceType": "Patient",
-    "identifier": [{"system": "https://example.org/my_id", "value": "test-foo"}],
+    "identifier": [{"system": "https://example.org/my_id", "value": "ohsu-ESCA"}],
 }
 
 VALID_REQUEST_BUNDLE = {
@@ -180,12 +181,19 @@ def test_write_bundle_unsupported_resource():
 
 def test_write_bundle_patient_missing_identifier():
     """A POST bundle entry.resource without identifier should produce 422."""
-    request_bundle = create_request_bundle(resource={"resourceType": "Patient"})
+    request_bundle = create_request_bundle(resource={"resourceType": "Patient", "id": "b7793c1a-690e-5b7b-8b5b-867555936d06"})
     response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(
         response, 422, entry_diagnostic="Resource missing identifier"
     )
 
+def test_write_bundle_patient_missing_id():
+    """A POST bundle entry.resource without id should produce 422."""
+    request_bundle = create_request_bundle(resource={"resourceType": "Patient", "identifier":  [{"system": "https://example.org/my_id", "value": "test-foo"}] })
+    response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
+    assert_bundle_response(
+        response, 422, entry_diagnostic="Resource missing id"
+    )
 
 def test_write_bundle_simple_ok():
     """A POST bundle without type should produce 201."""
