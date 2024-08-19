@@ -4,14 +4,14 @@ import subprocess
 import os
 from typing import List
 
-from aced_submission.grip_load import bulk_add, bulk_delete
+from aced_submission.grip_load import bulk_load, bulk_delete
 from aced_submission.meta_flat_load import DEFAULT_ELASTIC, load_flat
 from aced_submission.fhir_store import fhir_put
 from gen3_tracker.meta.dataframer import LocalFHIRDatabase
 
 
 
-async def process(rows: List[dict], project_id: str, access_token: str):
+async def process(rows: List[dict], project_id: str, access_token: str) -> bool:
     """Processes a bundle into a temp directory of NDJSON files
     that are compatible with existing loading functions
 
@@ -38,10 +38,11 @@ async def process(rows: List[dict], project_id: str, access_token: str):
             elif row["request"]["method"] == "DELETE":
                 delete_body["vertices"].append(row["id"])
 
-
         if len(delete_body["edges"]) > 0 or len(delete_body["vertices"]) > 0:
             res = bulk_delete("CALIPER", project_id=project_id, vertices=delete_body["vertices"],
                         edges=delete_body["edges"], output=logs, access_token=access_token)
+            if int(res[0]["status"]) != 200:
+                return False
 
             # TODO add elastic edge level deletion
             ## take row ids, fetch records into RAM, for each index do a dataframe pivot,
@@ -52,25 +53,36 @@ async def process(rows: List[dict], project_id: str, access_token: str):
 
         if files_written:
             subprocess.run(["jsonschemagraph", "gen-dir", "iceberg/schemas/graph", f"{temp_dir}", f"{temp_dir}/OUT","--project_id", f"{project_id}","--gzip_files"])
-            res = bulk_add("CALIPER", project_id, f"{temp_dir}/OUT", logs, access_token)
+            res = bulk_load("CALIPER", project_id, f"{temp_dir}/OUT", logs, access_token)
+            if int(res[0]["status"]) != 200:
+                return False
 
-            db = LocalFHIRDatabase(db_name=temp_dir)
-            db.load_ndjson_from_dir(path=temp_dir)
 
-            load_flat(project_id=project_id, index='researchsubject',
-                        generator=db.flattened_research_subjects(),
-                        limit=None, elastic_url=DEFAULT_ELASTIC,
-                        output_path=None)
+            try:
+                if os.path.exists("local_fhir.db"):
+                    os.unlink("local_fhir.db")
+                db = LocalFHIRDatabase(db_name="local_fhir.db")
+                db.load_ndjson_from_dir(path=temp_dir)
 
-            load_flat(project_id=project_id, index='observation',
-                        generator=db.flattened_observations(),
-                        limit=None, elastic_url=DEFAULT_ELASTIC,
-                        output_path=None)
+                load_flat(project_id=project_id, index='researchsubject',
+                            generator=db.flattened_research_subjects(),
+                            limit=None, elastic_url=DEFAULT_ELASTIC,
+                            output_path=None)
 
-            load_flat(project_id=project_id, index='file',
-                        generator=db.flattened_document_references(),
-                        limit=None, elastic_url=DEFAULT_ELASTIC,
-                        output_path=None)
+                load_flat(project_id=project_id, index='observation',
+                            generator=db.flattened_observations(),
+                            limit=None, elastic_url=DEFAULT_ELASTIC,
+                            output_path=None)
 
-            logs = fhir_put(project_id, path=temp_dir,
-                            elastic_url=DEFAULT_ELASTIC)
+                load_flat(project_id=project_id, index='file',
+                            generator=db.flattened_document_references(),
+                            limit=None, elastic_url=DEFAULT_ELASTIC,
+                            output_path=None)
+
+                logs = fhir_put(project_id, path=temp_dir,
+                                elastic_url=DEFAULT_ELASTIC)
+
+            except Exception as e:
+                return False
+
+        return True

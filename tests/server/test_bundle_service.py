@@ -1,4 +1,5 @@
 import copy
+import os
 
 from fastapi.testclient import TestClient
 from requests import Response
@@ -7,7 +8,8 @@ from bundle_service.main import app
 
 client = TestClient(app)
 
-HEADERS = {"Authorization": "foo"}
+ACCESS_TOKEN = os.environ.get('ACCESS_TOKEN', None)
+HEADERS = {"Authorization": f"{ACCESS_TOKEN}"}
 
 VALID_CLAIM = {
     "resourceType": "Claim",
@@ -26,6 +28,7 @@ VALID_CLAIM = {
 }
 
 VALID_PATIENT = {
+    "id": "b7793c1a-690e-5b7b-8b5b-867555936d06",
     "resourceType": "Patient",
     "identifier": [{"system": "https://example.org/my_id", "value": "test-foo"}],
 }

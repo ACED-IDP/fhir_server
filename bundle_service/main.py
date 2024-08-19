@@ -164,7 +164,8 @@ async def post__bundle(
 
     # TODO process each entry in the bundle, save request_bundle
     if project_id:
-        await process(valid_fhir_rows, project_id, authorization)
+        result = await process(valid_fhir_rows, project_id, authorization)
+
 
     response = Bundle(
         type="transaction-response", entry=response_entries, issues=outcome
@@ -222,7 +223,7 @@ def validate_bundle_entries(body: dict) -> list[BundleEntry] | list[dict]:
         print("RES: ", res)
         res2 = parse_obj(entry_dict)
 
-        if body["resource"]["id"] is None or  not bool(UUID_PATTERN.match(body["resource"]["id"])):
+        if entry_dict["resource"]["id"] is None or  not bool(UUID_PATTERN.match(entry_dict["resource"]["id"])):
             # figure out how to do a return state for this
             pass
 
