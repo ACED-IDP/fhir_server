@@ -119,6 +119,14 @@ def test_write_bundle_no_auth():
     )
 
 
+def test_write_bundle_bad_auth():
+    """A POST bundle with data, but no Auth header is insuficient"""
+    request_bundle = create_request_bundle()
+    request_bundle["identifier"]["value"] = "ohsu-this_proj_has_no_perms"
+    response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
+    assert_bundle_response(response, 401)
+
+
 def test_write_misc_resource():
     """A POST bundle with data, but not a Bundle should return a 422."""
     response = client.post("/Bundle", json={"resourceType": "Foo"}, headers=HEADERS)
@@ -157,6 +165,16 @@ def test_write_bundle_missing_identifier():
     )
 
 
+def test_write_content_larger_than_50MB():
+    """A POST bundle body that is larger than 50 BM should produce 422"""
+    request_bundle = create_request_bundle()
+    response = client.post(url="/Bundle", json=request_bundle, headers={"Authorization": f"{ACCESS_TOKEN}", "Content-Length": str(51*1024*1024)})
+    assert_bundle_response(
+        response,
+        422,
+    )
+
+
 def test_write_bundle_incorrect_method():
     """A POST bundle entry without PUT or DELETE should return a 422."""
     request_bundle = create_request_bundle()
@@ -187,13 +205,15 @@ def test_write_bundle_patient_missing_identifier():
         response, 422, entry_diagnostic="Resource missing identifier"
     )
 
+
 def test_write_bundle_patient_missing_id():
     """A POST bundle entry.resource without id should produce 422."""
-    request_bundle = create_request_bundle(resource={"resourceType": "Patient", "identifier":  [{"system": "https://example.org/my_id", "value": "test-foo"}] })
+    request_bundle = create_request_bundle(resource={"resourceType": "Patient", "identifier":  [{"system": "https://example.org/my_id", "value": "test-foo"}]})
     response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(
         response, 422, entry_diagnostic="Resource missing id"
     )
+
 
 def test_write_bundle_simple_ok():
     """A POST bundle without type should produce 201."""

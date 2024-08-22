@@ -3,6 +3,7 @@ import orjson
 import subprocess
 import os
 from typing import List
+from gen3.auth import Gen3Auth
 
 from aced_submission.grip_load import bulk_load, bulk_delete
 from aced_submission.meta_flat_load import DEFAULT_ELASTIC, load_flat
@@ -10,7 +11,33 @@ from aced_submission.fhir_store import fhir_put
 from gen3_tracker.meta.dataframer import LocalFHIRDatabase
 
 
-async def process(rows: List[dict], project_id: str, access_token: str) -> bool:
+async def _can_create(access_token: str, project_id: str) -> bool | str:
+    auth = Gen3Auth(refresh_file=f"accesstoken:///{access_token}")
+    user = auth.curl('/user/user').json()
+    program, project = project_id.split("-")
+
+    required_resources = [
+        f"/programs/{program}",
+        f"/programs/{program}/projects"
+    ]
+    for required_resource in required_resources:
+        if required_resource not in user['resources']:
+            return False, f"{required_resource} not found in user resources"
+
+    required_services = [
+        f"/programs/{program}/projects/{project}"
+    ]
+    for required_service in required_services:
+        if required_service not in user['authz']:
+            return False, f"{required_service} not found in user authz"
+        else:
+            if {'method': 'create', 'service': '*'} not in user['authz'][required_service]:
+                return False, f"create not found in user authz for {required_service}"
+
+    return True, f"HAS SERVICE create on resource {required_service}"
+
+
+async def process(rows: List[dict], project_id: str, access_token: str) -> list[str]:
     """Processes a bundle into a temp directory of NDJSON files
     that are compatible with existing loading functions
 
@@ -19,8 +46,7 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> bool:
     TODO: write new loading functions that load from ram instead of writing
     and reading to disk"""
 
-    print("ACCESS_TOKEN: ", access_token)
-
+    server_errors = []
     temp_files = {}
     logs = {"logs": []}
     delete_body = {"graph": "CALIPER", "edges": [], "vertices": []}
@@ -41,7 +67,7 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> bool:
             res = bulk_delete("CALIPER", project_id=project_id, vertices=delete_body["vertices"],
                               edges=delete_body["edges"], output=logs, access_token=access_token)
             if int(res[0]["status"]) != 200:
-                return False
+                server_errors.append(res[0]["message"])
 
             # TODO add elastic edge level deletion
             # take row ids, fetch records into RAM, for each index do a dataframe pivot,
@@ -54,7 +80,7 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> bool:
             subprocess.run(["jsonschemagraph", "gen-dir", "iceberg/schemas/graph", f"{temp_dir}", f"{temp_dir}/OUT", "--project_id", f"{project_id}", "--gzip_files"])
             res = bulk_load("CALIPER", project_id, f"{temp_dir}/OUT", logs, access_token)
             if int(res[0]["status"]) != 200:
-                return False
+                server_errors.append(res[0]["message"])
 
             try:
                 db = LocalFHIRDatabase(db_name=f"{temp_dir}/local_fhir.db")
@@ -78,7 +104,8 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> bool:
                 logs = fhir_put(project_id, path=temp_dir,
                                 elastic_url=DEFAULT_ELASTIC)
 
-            except Exception:
-                return False
+            except Exception as e:
+                server_errors.append(str(e))
 
-        return True
+        print("Process Logs: ", logs)
+        return server_errors

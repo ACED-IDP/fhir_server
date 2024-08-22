@@ -13,7 +13,7 @@ import logging
 from fhir.resources.bundle import Bundle, BundleEntry, BundleEntryResponse
 from fhir.resources.operationoutcome import OperationOutcome, OperationOutcomeIssue
 
-from bundle_service.processing.process_bundle import process
+from bundle_service.processing.process_bundle import process, _can_create
 from gen3_tracker.meta import parse_obj
 
 logger = logging.getLogger(__name__)
@@ -118,7 +118,8 @@ app = FastAPI(
     },
 )
 async def post__bundle(
-    authorization: Optional[str] = Header(None, alias="Authorization"),
+    access_token: Optional[str] = Header(None, alias="access_token"),
+    content_length: Optional[str] = Header(None, alias="content_length"),
     body: Request = None,
 ) -> Any:
     """
@@ -130,17 +131,17 @@ async def post__bundle(
     * See more regarding `use case and validations` [here](https://github.com/ACED-IDP/submission/wiki/Submission).
     """
 
+    errors = []
     body_dict = await body.json()
 
-    # validate bundle as a whole
-    outcome = validate_bundle(body_dict, authorization)
+    # Balidate bundle as a whole
+    outcome = validate_bundle(body_dict, access_token, content_length)
 
-    # validate each entry in the bundle
+    # Validate each entry in the bundle, and get the project id from the bundle.
+    # If bundle is invalid, project_id will not exist
     response_entries, valid_fhir_rows, project_id = validate_bundle_entries(body_dict)
 
-    # get the project id from the bundle. If bundle is invalid, project_id will not exist
-
-    # set status code
+    # Set status code
     status_code = 201
     headers = {"Content-Type": "application/fhir+json"}
     for response_entry in response_entries:
@@ -152,14 +153,18 @@ async def post__bundle(
         if len([_.code for _ in outcome.issue if _.code == "security"]):
             status_code = 401
 
-    # Check body size.TODO: figure out how to integrate this into bundle validation
-    # Assuming that Content-Length will always be present in request
-    req_size = body.headers.get('Content-Length')
-    if req_size.isdigit() and int(req_size) > MAX_REQUEST_SIZE:
-        status_code = 422
-
-    if len(outcome.issue) == 0:
-        result = await process(valid_fhir_rows, project_id, authorization)
+    if status_code == 201:
+        errors = await process(valid_fhir_rows, project_id, access_token)
+        # Not sure how to write a test for this
+        if len(errors) > 0:
+            outcome.issue.append(
+                OperationOutcomeIssue(
+                    severity="error",
+                    code="execption",
+                    diagnostics=str(errors),
+                )
+            )
+            status_code = 500
 
     response = Bundle(
         type="transaction-response", entry=response_entries, issues=outcome
@@ -177,6 +182,16 @@ async def post__bundle(
 
 def validate_entry(request_entry: BundleEntry) -> OperationOutcomeIssue:
     """Validate a single entry, return issue or None"""
+
+    # Validate the actual resource itself in the obj ?
+    res = parse_obj(request_entry.resource)
+    if res.exception is not None:
+        return OperationOutcomeIssue(
+            severity="error",
+            code="structure",
+            diagnostics=str(res.exception),
+        )
+
     if request_entry.request.method not in ["PUT", "DELETE"]:
         return OperationOutcomeIssue(
             severity="error",
@@ -220,9 +235,6 @@ def validate_bundle_entries(body: dict) -> list[BundleEntry] | list[dict]:
     request_entries = body.get("entry", [])
     for entry_dict in request_entries:
 
-        # Validate the actual resource itself in the obj ?
-        res = parse_obj(entry_dict["resource"])
-
         request_entry = BundleEntry(
             **entry_dict
         )  # TODO - this can be invalid, capture issue
@@ -241,11 +253,21 @@ def validate_bundle_entries(body: dict) -> list[BundleEntry] | list[dict]:
     return response_entries, valid_fhir_rows, body.get("identifier", {}).get("value", None)
 
 
-def validate_bundle(body: dict, authorization: str) -> OperationOutcome:
+def validate_bundle(body: dict, authorization: str, content_length: str) -> OperationOutcome:
     """Ensure bundle is valid for our use case, These issues and warnings must apply to the Bundle as a whole, not to individual entries.
     see https://hl7.org/fhir/R5/bundle-definitions.html#Bundle.issues
     """
+
     outcome = OperationOutcome(issue=[])
+
+    if content_length is not None and int(content_length) > 1024*1024*50:
+        outcome.issue.append(
+            OperationOutcomeIssue(
+                severity="error",
+                code="required",
+                diagnostics="Bundle body greater than 50 MB",
+            )
+        )
     if body is None or body == {}:
         outcome.issue.append(
             OperationOutcomeIssue(
@@ -327,12 +349,26 @@ def validate_bundle(body: dict, authorization: str) -> OperationOutcome:
             )
         )
 
+    if authorization is not None and project_id is not None:
+        can_create, msg = _can_create(authorization, project_id)
+        if not can_create:
+            outcome.issue.append(
+                OperationOutcomeIssue(
+                    severity="error",
+                    code="security",
+                    diagnostics=msg,
+                )
+            )
+
     return outcome
 
 
 @app.get("/_status", response_model=None, tags=["System"])
-def get__status() -> None:
+def get__status() -> Any:
     """
     Returns if service is healthy or not
     """
+    return JSONResponse(
+            content={"Message": "Feeling good!"}, status_code=200, headers={"Content-Type": "application/json"}
+    )
     pass
