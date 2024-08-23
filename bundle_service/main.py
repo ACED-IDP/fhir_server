@@ -15,6 +15,7 @@ from fhir.resources.operationoutcome import OperationOutcome, OperationOutcomeIs
 
 from bundle_service.processing.process_bundle import process, _can_create
 from gen3_tracker.meta import parse_obj
+from pydantic.v1.error_wrappers import ValidationError
 
 logger = logging.getLogger(__name__)
 """Bundle submission should be less than 50 MB
@@ -118,8 +119,8 @@ app = FastAPI(
     },
 )
 async def post__bundle(
-    access_token: Optional[str] = Header(None, alias="access_token"),
-    content_length: Optional[str] = Header(None, alias="content_length"),
+    access_token: Optional[str] = Header(None, alias="Authorization"),
+    content_length: Optional[str] = Header(None, alias="Content-Length"),
     body: Request = None,
 ) -> Any:
     """
@@ -134,8 +135,9 @@ async def post__bundle(
     errors = []
     body_dict = await body.json()
 
+
     # Balidate bundle as a whole
-    outcome = validate_bundle(body_dict, access_token, content_length)
+    outcome = await validate_bundle(body_dict, access_token, content_length)
 
     # Validate each entry in the bundle, and get the project id from the bundle.
     # If bundle is invalid, project_id will not exist
@@ -180,16 +182,14 @@ async def post__bundle(
     )
 
 
-def validate_entry(request_entry: BundleEntry) -> OperationOutcomeIssue:
+def validate_entry(request_entry: BundleEntry, error_details: dict) -> OperationOutcomeIssue:
     """Validate a single entry, return issue or None"""
 
-    # Validate the actual resource itself in the obj ?
-    res = parse_obj(request_entry.resource)
-    if res.exception is not None:
+    if error_details is not None:
         return OperationOutcomeIssue(
             severity="error",
             code="structure",
-            diagnostics=str(res.exception),
+            diagnostics=str(error_details),
         )
 
     if request_entry.request.method not in ["PUT", "DELETE"]:
@@ -234,12 +234,19 @@ def validate_bundle_entries(body: dict) -> list[BundleEntry] | list[dict]:
 
     request_entries = body.get("entry", [])
     for entry_dict in request_entries:
+        #entry_dict["resource"]["fwefe"] = "fdsfdf"
+        #entry_dict["wfwe"] = 'FDSF'
 
-        request_entry = BundleEntry(
-            **entry_dict
-        )  # TODO - this can be invalid, capture issue
+        try:
+            request_entry = BundleEntry(
+                **entry_dict
+            )
+        except ValidationError as e:
+            response_issue = validate_entry(None, error_details=e.json())
+
+
         response_entry = BundleEntry()
-        response_issue = validate_entry(request_entry)
+        response_issue = validate_entry(request_entry, error_details=None)
         if response_issue.severity == "success":
             # If entry passes validation, add it to submission row list
             valid_fhir_rows.append(entry_dict)
@@ -253,7 +260,7 @@ def validate_bundle_entries(body: dict) -> list[BundleEntry] | list[dict]:
     return response_entries, valid_fhir_rows, body.get("identifier", {}).get("value", None)
 
 
-def validate_bundle(body: dict, authorization: str, content_length: str) -> OperationOutcome:
+async def validate_bundle(body: dict, authorization: str, content_length: str) -> OperationOutcome:
     """Ensure bundle is valid for our use case, These issues and warnings must apply to the Bundle as a whole, not to individual entries.
     see https://hl7.org/fhir/R5/bundle-definitions.html#Bundle.issues
     """
@@ -349,8 +356,10 @@ def validate_bundle(body: dict, authorization: str, content_length: str) -> Oper
             )
         )
 
+    print("AUTH: ", authorization, "PROJ ID: ", )
     if authorization is not None and project_id is not None:
-        can_create, msg = _can_create(authorization, project_id)
+        can_create, msg = await _can_create(authorization, project_id)
+        print("MSG: ", msg)
         if not can_create:
             outcome.issue.append(
                 OperationOutcomeIssue(

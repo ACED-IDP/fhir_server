@@ -2,8 +2,9 @@ import tempfile
 import orjson
 import subprocess
 import os
+import time
 from typing import List
-from gen3.auth import Gen3Auth
+from gen3.auth import Gen3Auth, decode_token
 
 from aced_submission.grip_load import bulk_load, bulk_delete
 from aced_submission.meta_flat_load import DEFAULT_ELASTIC, load_flat
@@ -11,8 +12,32 @@ from aced_submission.fhir_store import fhir_put
 from gen3_tracker.meta.dataframer import LocalFHIRDatabase
 
 
+
+async def _is_valid_token(access_token: str) -> bool | str:
+    """The FHIR server needs some way of checking if the token is valid before passing it to gen3Auth"""
+    try:
+        token = decode_token(access_token)
+    except Exception as e:
+        return False, str(e)
+
+    # Return false if token has expired
+    current_time = int(time.time())
+    if not (current_time >= token['iat'] and current_time <= token['exp']):
+        return False, "Token has expired"
+
+    return True, None
+
+
 async def _can_create(access_token: str, project_id: str) -> bool | str:
-    auth = Gen3Auth(refresh_file=f"accesstoken:///{access_token}")
+    """General resource path Gen3 permissions checking given a valid token"""
+
+    valid_token, msg = await _is_valid_token(access_token)
+    print("VALID TOKEN: ", valid_token, msg)
+    if not valid_token:
+        return False, msg
+
+    #auth = Gen3Auth(refresh_file=f"accesstoken:///{access_token}")
+    auth = Gen3Auth(access_token=access_token)
     user = auth.curl('/user/user').json()
     program, project = project_id.split("-")
 
