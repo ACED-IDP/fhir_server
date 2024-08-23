@@ -99,6 +99,17 @@ app = FastAPI(
                     }
                 },
             },
+            202: {
+                "description": "Accepted",
+                "content": {
+                    "application/json+fhir": {
+                        "schema": {
+                            "type": "object",
+                            "description": "Some of the entries in the bundle were rejected",
+                        }
+                    }
+                },
+            },
             422: {
                 "description": "Unprocessable Entity",
                 "content": {
@@ -111,7 +122,7 @@ app = FastAPI(
                 },
             },
             401: {
-                "description": "Security Error",
+                "description": "Unauthorized",
                 "content": {
                     "application/json+fhir": {
                         "schema": {
@@ -122,7 +133,7 @@ app = FastAPI(
                 },
             },
             403: {
-                 "description": "Forbidden Error",
+                 "description": "Forbidden",
                  "content": {
                      "application/json+fhir": {
                          "schema": {
@@ -160,10 +171,9 @@ async def post__bundle(
     * See more regarding `use case and validations` [here](https://github.com/ACED-IDP/submission/wiki/Submission).
     """
 
-    errors = []
     body_dict = await body.json()
 
-    # Balidate bundle as a whole
+    # Validate bundle as a whole
     outcome = await validate_bundle(body_dict, access_token, content_length)
 
     # Validate each entry in the bundle, and get the project id from the bundle.
@@ -175,19 +185,22 @@ async def post__bundle(
     headers = {"Content-Type": "application/fhir+json"}
 
     all_invalid = all([elem.response.status != "200" for elem in response_entries])
+    any_invalid_entries = any([elem.response.status != "200" for elem in response_entries])
     any_fatal_issues = any([_.code for _ in outcome.issue if _.severity == "fatal"])
 
     # If not the default success issue
-    if not (len(outcome.issue) == 1 and outcome.issue[0] == SUCCESS_ISSUE):
+
+    if any_fatal_issues or any_invalid_entries:
         # This if statement aims to acpture artial issue severity error bundles where some resources are improperly formatted, but others can be executed
         if not all_invalid and not any_fatal_issues:
             status_code = 202
-        if any_fatal_issues or all([elem.response.status == "422" for elem in response_entries]):
+        if any_fatal_issues or all([elem.response.status == "422" for elem in response_entries]) or all_invalid:
             status_code = 422
         if len([_.code for _ in outcome.issue if _.code == "security"]):
             status_code = 401
         if len([_.code for _ in outcome.issue if _.code == "forbidden"]):
             status_code = 403
+
 
     # To continue, bundle cannot have fatal severity issues
     if not any_fatal_issues:
@@ -196,7 +209,7 @@ async def post__bundle(
         if len(errors) > 0:
             outcome.issue.append(
                 OperationOutcomeIssue(
-                    severity="error",
+                    severity="fatal",
                     code="exception",
                     diagnostics=str(errors),
                 )

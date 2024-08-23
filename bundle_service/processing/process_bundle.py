@@ -56,7 +56,7 @@ async def _can_create(access_token: str, project_id: str) -> bool | str | int:
             if {'method': 'create', 'service': '*'} not in user['authz'][required_service]:
                 return False, f"create not found in user authz for {required_service}"
 
-    return True, f"HAS SERVICE create on resource {required_service}", 403
+    return True, f"HAS SERVICE create on resource {required_service}", None
 
 
 async def process(rows: List[dict], project_id: str, access_token: str) -> list[str]:
