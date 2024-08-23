@@ -1,10 +1,13 @@
 import copy
 import os
+import json
+import base64
 
 from fastapi.testclient import TestClient
 from requests import Response
 
 from bundle_service.main import app
+from gen3.auth import decode_token
 
 client = TestClient(app)
 
@@ -31,13 +34,13 @@ VALID_CLAIM = {
 VALID_PATIENT = {
     "id": "b7793c1a-690e-5b7b-8b5b-867555936d06",
     "resourceType": "Patient",
-    "identifier": [{"system": "https://example.org/my_id", "value": "ohsu-ESCA"}],
+    "identifier": [{"system": "https://example.org/my_id", "value": "ohsu-test"}],
 }
 
 VALID_REQUEST_BUNDLE = {
     "resourceType": "Bundle",
     "type": "transaction",
-    "identifier": {"system": "https://aced-idp.org/project_id", "value": "ohsu-ESCA"},
+    "identifier": {"system": "https://aced-idp.org/project_id", "value": "ohsu-test"},
     "entry": [
         {
             "resource": None,
@@ -65,6 +68,15 @@ def test_read_bundle():
     assert response.status_code == 405, response.status_code
 
 
+def mock_encode_token(payload: dict) -> str:
+    """Encodes only the payload, and provides a mock header, signature"""
+    json_str = json.dumps(payload)
+    base64_bytes = base64.urlsafe_b64encode(json_str.encode('utf-8'))
+    base64_str = base64_bytes.decode('utf-8').rstrip("=")
+    token = f"header.{base64_str}.signature"
+    return token
+
+
 def assert_bundle_response(
     response: Response,
     expected_status_code: int,
@@ -72,7 +84,7 @@ def assert_bundle_response(
     entry_diagnostic: str = None,
 ):
     """Check that a bundle response is valid."""
-    #assert response.status_code == expected_status_code, response.status_code
+    assert response.status_code == expected_status_code, response.status_code
     response_bundle = response.json()
     print("RESP BUNDLE: ", response_bundle)
     assert "resourceType" in response_bundle, response_bundle
@@ -112,7 +124,7 @@ def test_write_bundle_no_data():
     assert_bundle_response(response, 422, bundle_diagnostic="Bundle missing body")
 
 
-def test_write_bundle_no_auth():
+def test_write_bundle_no_auth_header():
     """A POST bundle with data, but no Auth header should return a 401."""
     response = client.post("/Bundle", json={"resourceType": "Bundle"})
     assert_bundle_response(
@@ -120,12 +132,12 @@ def test_write_bundle_no_auth():
     )
 
 
-def test_write_bundle_bad_auth():
-    """A POST bundle with data, but no Auth header is insuficient"""
+def test_write_bundle_with_no_project_permissions():
+    """A POST with data but insufficient perms for the project that is being submitted to returns a 401"""
     request_bundle = create_request_bundle()
     request_bundle["identifier"]["value"] = "ohsu-this_proj_has_no_perms"
     response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
-    assert_bundle_response(response, 401)
+    assert_bundle_response(response, 403, bundle_diagnostic="/programs/ohsu/projects/this_proj_has_no_perms not found in user authz")
 
 
 def test_write_misc_resource():
@@ -241,6 +253,39 @@ def test_write_bundle_missing_type():
         422,
         bundle_diagnostic="Bundle must be of type `transaction`, not None",
     )
+
+
+def test_write_bundle_expired_token():
+    """A POST bundle with an expired token should produce a 401."""
+    token = decode_token(ACCESS_TOKEN)
+    token['exp'] = token['iat']
+    expired_token = mock_encode_token(token)
+    request_bundle = create_request_bundle()
+    response = client.post(url="/Bundle", json=request_bundle, headers={"Authorization": expired_token})
+    assert_bundle_response(response, 401, bundle_diagnostic="Token has expired")
+
+
+def test_write_partial_invalid_bundle_resources():
+    """A POST bundle with an invalid FHIR resource in the bundle should produce 422 for that resource,
+    and the other valid resource should produce a 200"""
+    request_bundle = create_request_bundle()
+    _ = copy.deepcopy(request_bundle["entry"][0])
+    request_bundle["entry"].append(_)
+    request_bundle["entry"][0]["resource"]["fewfwefewf"] = "dsfdfdsf"
+    response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
+    assert_bundle_response(response, 201, bundle_diagnostic="non fatal entry")
+
+
+# Currently only 422
+def test_all_invalid_bundle_resources():
+    """A POST bundle with all invalid FHIR resources in the bundle should produce a 422 for all resources"""
+    request_bundle = create_request_bundle()
+    _ = copy.deepcopy(request_bundle["entry"][0])
+    request_bundle["entry"].append(_)
+    request_bundle["entry"][0]["resource"]["fewfwefewf"] = "dsfdfdsf"
+    request_bundle["entry"][1]["resource"]["fewfwefewf"] = "dsfdfdsf"
+    response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
+    assert_bundle_response(response, 422, bundle_diagnostic="non fatal entry")
 
 
 def test_openapi_ui():

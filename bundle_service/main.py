@@ -14,13 +14,19 @@ from fhir.resources.bundle import Bundle, BundleEntry, BundleEntryResponse
 from fhir.resources.operationoutcome import OperationOutcome, OperationOutcomeIssue
 
 from bundle_service.processing.process_bundle import process, _can_create
-from gen3_tracker.meta import parse_obj
 from pydantic.v1.error_wrappers import ValidationError
 
 logger = logging.getLogger(__name__)
+
 """Bundle submission should be less than 50 MB
 see https://cloud.google.com/healthcare-api/quotas"""
 MAX_REQUEST_SIZE = 50 * 1024 * 1024
+
+SUCCESS_ISSUE = {
+                    "severity": "success",
+                    "code": "success",
+                    "diagnostics": "non fatal entry"
+                }
 
 UUID_PATTERN = re.compile(r'^[\da-f]{8}-([\da-f]{4}-){3}[\da-f]{12}$', re.IGNORECASE)
 valid_resource_types = [
@@ -115,6 +121,28 @@ app = FastAPI(
                     }
                 },
             },
+            403: {
+                 "description": "Forbidden Error",
+                 "content": {
+                     "application/json+fhir": {
+                         "schema": {
+                             "type": "object",
+                             "description": " User is Forbidden from executing operation",
+                         }
+                     }
+                 },
+             },
+            500: {
+                 "description": "Internal Server Error",
+                 "content": {
+                     "application/json+fhir": {
+                         "schema": {
+                             "type": "object",
+                             "description": "Server encountered a problem while loading the bundle",
+                         }
+                     }
+                 },
+             },
         }
     },
 )
@@ -135,7 +163,6 @@ async def post__bundle(
     errors = []
     body_dict = await body.json()
 
-
     # Balidate bundle as a whole
     outcome = await validate_bundle(body_dict, access_token, content_length)
 
@@ -146,23 +173,27 @@ async def post__bundle(
     # Set status code
     status_code = 201
     headers = {"Content-Type": "application/fhir+json"}
-    for response_entry in response_entries:
-        if response_entry.response.status != "200":
+
+    all_invalid = all([elem.response.status != "200" for elem in response_entries])
+    any_fatal_issues =  any([_.code for _ in outcome.issue if _.severity == "fatal"])
+
+    if outcome.issue and outcome.issue[0] != SUCCESS_ISSUE:
+        if any_fatal_issues or all([elem.response.status == "422" for elem in response_entries]):
             status_code = 422
-            break
-    if outcome.issue:
-        status_code = 422
         if len([_.code for _ in outcome.issue if _.code == "security"]):
             status_code = 401
+        if len([_.code for _ in outcome.issue if _.code == "forbidden"]):
+            status_code = 403
 
-    if status_code == 201:
+    # To continue, bundle cannot have fatal severity issues
+    if not any_fatal_issues:
         errors = await process(valid_fhir_rows, project_id, access_token)
         # Not sure how to write a test for this
         if len(errors) > 0:
             outcome.issue.append(
                 OperationOutcomeIssue(
                     severity="error",
-                    code="execption",
+                    code="exception",
                     diagnostics=str(errors),
                 )
             )
@@ -234,8 +265,6 @@ def validate_bundle_entries(body: dict) -> list[BundleEntry] | list[dict]:
 
     request_entries = body.get("entry", [])
     for entry_dict in request_entries:
-        #entry_dict["resource"]["fwefe"] = "fdsfdf"
-        #entry_dict["wfwe"] = 'FDSF'
 
         try:
             request_entry = BundleEntry(
@@ -244,9 +273,10 @@ def validate_bundle_entries(body: dict) -> list[BundleEntry] | list[dict]:
         except ValidationError as e:
             response_issue = validate_entry(None, error_details=e.json())
 
+        else:
+            response_issue = validate_entry(request_entry, error_details=None)
 
         response_entry = BundleEntry()
-        response_issue = validate_entry(request_entry, error_details=None)
         if response_issue.severity == "success":
             # If entry passes validation, add it to submission row list
             valid_fhir_rows.append(entry_dict)
@@ -270,7 +300,7 @@ async def validate_bundle(body: dict, authorization: str, content_length: str) -
     if content_length is not None and int(content_length) > 1024*1024*50:
         outcome.issue.append(
             OperationOutcomeIssue(
-                severity="error",
+                severity="fatal",
                 code="required",
                 diagnostics="Bundle body greater than 50 MB",
             )
@@ -278,7 +308,7 @@ async def validate_bundle(body: dict, authorization: str, content_length: str) -
     if body is None or body == {}:
         outcome.issue.append(
             OperationOutcomeIssue(
-                severity="error",
+                severity="fatal",
                 code="required",
                 diagnostics="Bundle missing body",
             )
@@ -287,7 +317,7 @@ async def validate_bundle(body: dict, authorization: str, content_length: str) -
     if authorization is None:
         outcome.issue.append(
             OperationOutcomeIssue(
-                severity="error",
+                severity="fatal",
                 code="security",
                 diagnostics="Missing Authorization header",
             )
@@ -297,7 +327,7 @@ async def validate_bundle(body: dict, authorization: str, content_length: str) -
     if _ != "Bundle":
         outcome.issue.append(
             OperationOutcomeIssue(
-                severity="error",
+                severity="fatal",
                 code="required",
                 diagnostics=f"Body must be a FHIR Bundle, not {_}",
             )
@@ -307,7 +337,7 @@ async def validate_bundle(body: dict, authorization: str, content_length: str) -
     if _ != "transaction":
         outcome.issue.append(
             OperationOutcomeIssue(
-                severity="error",
+                severity="fatal",
                 code="required",
                 diagnostics=f"Bundle must be of type `transaction`, not {_}",
             )
@@ -318,7 +348,7 @@ async def validate_bundle(body: dict, authorization: str, content_length: str) -
     if identifier is None:
         outcome.issue.append(
             OperationOutcomeIssue(
-                severity="error",
+                severity="fatal",
                 code="required",
                 diagnostics="Bundle missing identifier",
             )
@@ -332,7 +362,7 @@ async def validate_bundle(body: dict, authorization: str, content_length: str) -
     if project_id is None:
         outcome.issue.append(
             OperationOutcomeIssue(
-                severity="error",
+                severity="fatal",
                 code="required",
                 diagnostics="Bundle missing identifier https://aced-idp.org/project_id",
             )
@@ -340,7 +370,7 @@ async def validate_bundle(body: dict, authorization: str, content_length: str) -
     if project_id is not None and len(project_id.split("-")) != 2:
         outcome.issue.append(
             OperationOutcomeIssue(
-                severity="error",
+                severity="fatal",
                 code="required",
                 diagnostics="Bundle identifier project id not in the from 'str-str'",
              )
@@ -350,25 +380,32 @@ async def validate_bundle(body: dict, authorization: str, content_length: str) -
     if _ is None or _ == []:
         outcome.issue.append(
             OperationOutcomeIssue(
-                severity="error",
+                severity="fatal",
                 code="required",
                 diagnostics="Bundle missing entry",
             )
         )
 
-    print("AUTH: ", authorization, "PROJ ID: ", )
     if authorization is not None and project_id is not None:
-        can_create, msg = await _can_create(authorization, project_id)
-        print("MSG: ", msg)
+        can_create, msg, error_code = await _can_create(authorization, project_id)
         if not can_create:
+            code_label = "security" if error_code == 401 else "forbidden"
             outcome.issue.append(
                 OperationOutcomeIssue(
-                    severity="error",
-                    code="security",
+                    severity="fatal",
+                    code=code_label,
                     diagnostics=msg,
                 )
             )
 
+    if len(outcome.issue) == 0:
+        outcome.issue.append(
+            OperationOutcomeIssue(
+                severity="success",
+                code="success",
+                diagnostics="non fatal entry",
+            )
+        )
     return outcome
 
 

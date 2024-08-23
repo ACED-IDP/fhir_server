@@ -12,7 +12,6 @@ from aced_submission.fhir_store import fhir_put
 from gen3_tracker.meta.dataframer import LocalFHIRDatabase
 
 
-
 async def _is_valid_token(access_token: str) -> bool | str:
     """The FHIR server needs some way of checking if the token is valid before passing it to gen3Auth"""
     try:
@@ -28,15 +27,13 @@ async def _is_valid_token(access_token: str) -> bool | str:
     return True, None
 
 
-async def _can_create(access_token: str, project_id: str) -> bool | str:
+async def _can_create(access_token: str, project_id: str) -> bool | str | int:
     """General resource path Gen3 permissions checking given a valid token"""
 
     valid_token, msg = await _is_valid_token(access_token)
-    print("VALID TOKEN: ", valid_token, msg)
     if not valid_token:
-        return False, msg
+        return False, msg, 401
 
-    #auth = Gen3Auth(refresh_file=f"accesstoken:///{access_token}")
     auth = Gen3Auth(access_token=access_token)
     user = auth.curl('/user/user').json()
     program, project = project_id.split("-")
@@ -47,19 +44,19 @@ async def _can_create(access_token: str, project_id: str) -> bool | str:
     ]
     for required_resource in required_resources:
         if required_resource not in user['resources']:
-            return False, f"{required_resource} not found in user resources"
+            return False, f"{required_resource} not found in user resources", 403
 
     required_services = [
         f"/programs/{program}/projects/{project}"
     ]
     for required_service in required_services:
         if required_service not in user['authz']:
-            return False, f"{required_service} not found in user authz"
+            return False, f"{required_service} not found in user authz", 403
         else:
             if {'method': 'create', 'service': '*'} not in user['authz'][required_service]:
                 return False, f"create not found in user authz for {required_service}"
 
-    return True, f"HAS SERVICE create on resource {required_service}"
+    return True, f"HAS SERVICE create on resource {required_service}", 403
 
 
 async def process(rows: List[dict], project_id: str, access_token: str) -> list[str]:
