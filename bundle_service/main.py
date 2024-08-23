@@ -175,9 +175,13 @@ async def post__bundle(
     headers = {"Content-Type": "application/fhir+json"}
 
     all_invalid = all([elem.response.status != "200" for elem in response_entries])
-    any_fatal_issues =  any([_.code for _ in outcome.issue if _.severity == "fatal"])
+    any_fatal_issues = any([_.code for _ in outcome.issue if _.severity == "fatal"])
 
-    if outcome.issue and outcome.issue[0] != SUCCESS_ISSUE:
+    # If not the default success issue
+    if not (len(outcome.issue) == 1 and outcome.issue[0] == SUCCESS_ISSUE):
+        # This if statement aims to acpture artial issue severity error bundles where some resources are improperly formatted, but others can be executed
+        if not all_invalid and not any_fatal_issues:
+            status_code = 202
         if any_fatal_issues or all([elem.response.status == "422" for elem in response_entries]):
             status_code = 422
         if len([_.code for _ in outcome.issue if _.code == "security"]):
@@ -203,9 +207,11 @@ async def post__bundle(
         type="transaction-response", entry=response_entries, issues=outcome
     )
     response.id = str(uuid.uuid4())
+
+    # Not sure what this is doing
     Bundle.validate(response)
 
-    if status_code == 201:
+    if status_code in [201, 202]:
         headers["Location"] = f"https://aced-idp.org/Bundle/{response.id}"
 
     return JSONResponse(
