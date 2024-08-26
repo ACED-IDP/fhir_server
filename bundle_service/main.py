@@ -291,11 +291,7 @@ https://build.fhir.org/datatypes.html#uuid for details"
             code="required",
             diagnostics=f"Missing identifier for {request_entry.resource.resource_type} with {request_entry.resource.id}",
         )
-    return OperationOutcomeIssue(
-        severity="success",
-        code="success",
-        diagnostics="Valid entry",
-    )
+    return None
 
 
 def validate_bundle_entries(body: dict) -> list[BundleEntry] | list[dict]:
@@ -320,14 +316,15 @@ def validate_bundle_entries(body: dict) -> list[BundleEntry] | list[dict]:
             response_issue = validate_entry(request_entry, error_details=None, entry_dict=None)
 
         response_entry = BundleEntry()
-        if response_issue.severity == "success":
+        if response_issue is None:
             # If entry passes validation, add it to submission row list
             valid_fhir_rows.append(entry_dict)
             response_status = "200"
         else:
             response_status = "422"
         response_entry.response = BundleEntryResponse(status=response_status)
-        response_entry.response.outcome = OperationOutcome(issue=[response_issue])
+        if response_issue is not None:
+            response_entry.response.outcome = OperationOutcome(issue=[response_issue])
         response_entries.append(response_entry)
 
     return response_entries, valid_fhir_rows, body.get("identifier", {}).get("value", None)

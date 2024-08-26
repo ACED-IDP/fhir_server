@@ -272,7 +272,7 @@ def test_write_partial_invalid_bundle_resources():
     request_bundle["entry"].append(_)
     request_bundle["entry"][0]["resource"]["fewfwefewf"] = "dsfdfdsf"
     response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
-    assert_bundle_response(response, 202, bundle_diagnostic="non fatal entry")
+    assert_bundle_response(response, 202, entry_diagnostic="Validation error on None with id: None")
 
 
 def test_write_partial_invalid_bundle_method():
@@ -282,8 +282,7 @@ def test_write_partial_invalid_bundle_method():
     request_bundle["entry"].append(_)
     request_bundle["entry"][0]["request"] = {"method": "PUT", "url": "Patient"},
     response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
-    assert_bundle_response(response, 202, bundle_diagnostic="non fatal entry")
-
+    assert_bundle_response(response, 202, entry_diagnostic="Validation error on None with id: None")
 
 def test_all_invalid_bundle_resources():
     """A PUT bundle with all invalid FHIR resources in the bundle should produce a 422 for all resources"""
