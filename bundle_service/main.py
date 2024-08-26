@@ -4,19 +4,19 @@ from __future__ import annotations
 import uuid
 from typing import Optional, Any
 import re
+import logging
+
 
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
-
-import logging
-
+from cdislogging import get_logger
 from fhir.resources.bundle import Bundle, BundleEntry, BundleEntryResponse
 from fhir.resources.operationoutcome import OperationOutcome, OperationOutcomeIssue
-
 from bundle_service.processing.process_bundle import process, _can_create
 from pydantic.v1.error_wrappers import ValidationError
 
-logger = logging.getLogger(__name__)
+
+logger = get_logger("fhir_server", log_level="info")
 
 """Bundle submission should be less than 50 MB
 see https://cloud.google.com/healthcare-api/quotas"""
@@ -25,7 +25,6 @@ MAX_REQUEST_SIZE = 50 * 1024 * 1024
 SUCCESS_ISSUE = {
                     "severity": "success",
                     "code": "success",
-                    "diagnostics": "non fatal entry"
                 }
 
 UUID_PATTERN = re.compile(r'^[\da-f]{8}-([\da-f]{4}-){3}[\da-f]{12}$', re.IGNORECASE)
@@ -42,6 +41,8 @@ valid_resource_types = [
     "DocumentReference",
     "Task",
     "FamilyMemberHistory",
+    "BodyStructure",
+    "Organization"
 ]
 
 tags_metadata = [
@@ -70,7 +71,7 @@ app = FastAPI(
 )
 
 
-@app.post(
+@app.put(
     "/Bundle",
     # response_model=Any,
     # responses={"default": {"model": Any}},
@@ -157,7 +158,7 @@ app = FastAPI(
         }
     },
 )
-async def post__bundle(
+async def put__bundle(
     access_token: Optional[str] = Header(None, alias="Authorization"),
     content_length: Optional[str] = Header(None, alias="Content-Length"),
     body: Request = None,
@@ -176,6 +177,25 @@ async def post__bundle(
     # Validate bundle as a whole
     outcome = await validate_bundle(body_dict, access_token, content_length)
 
+    any_fatal_issues = any([_ for _ in outcome.issue if _.severity == "fatal"])
+    if any_fatal_issues:
+        status_code = 422
+        if len([_.code for _ in outcome.issue if _.code == "security"]):
+            status_code = 401
+        if len([_.code for _ in outcome.issue if _.code == "forbidden"]):
+            status_code = 403
+
+        # If fatal error exit early since nothing more can be done.
+        response = Bundle(
+            type="transaction-response", entry=None, issues=outcome
+        )
+        response.id = str(uuid.uuid4())
+        logger.error(f"[{status_code}] {response.dict()}")
+        return JSONResponse(
+            content=response.dict(), status_code=status_code,
+            headers={"Content-Type": "application/fhir+json"}
+        )
+
     # Validate each entry in the bundle, and get the project id from the bundle.
     # If bundle is invalid, project_id will not exist
     response_entries, valid_fhir_rows, project_id = validate_bundle_entries(body_dict)
@@ -186,35 +206,26 @@ async def post__bundle(
 
     all_invalid = all([elem.response.status != "200" for elem in response_entries])
     any_invalid_entries = any([elem.response.status != "200" for elem in response_entries])
-    any_fatal_issues = any([_.code for _ in outcome.issue if _.severity == "fatal"])
 
-    # If not the default success issue
-
-    if any_fatal_issues or any_invalid_entries:
-        # This if statement aims to acpture artial issue severity error bundles where some resources are improperly formatted, but others can be executed
-        if not all_invalid and not any_fatal_issues:
-            status_code = 202
-        if any_fatal_issues or all([elem.response.status == "422" for elem in response_entries]) or all_invalid:
+    if any_invalid_entries:
+        # This if statement aims to capture partial issue severity error bundles where
+        #  some resources are improperly formatted, but others can be executed
+        status_code = 202
+        if all_invalid:
             status_code = 422
-        if len([_.code for _ in outcome.issue if _.code == "security"]):
-            status_code = 401
-        if len([_.code for _ in outcome.issue if _.code == "forbidden"]):
-            status_code = 403
-
 
     # To continue, bundle cannot have fatal severity issues
-    if not any_fatal_issues:
-        errors = await process(valid_fhir_rows, project_id, access_token)
-        # Not sure how to write a test for this
-        if len(errors) > 0:
-            outcome.issue.append(
-                OperationOutcomeIssue(
-                    severity="fatal",
-                    code="exception",
-                    diagnostics=str(errors),
-                )
+    errors = await process(valid_fhir_rows, project_id, access_token)
+    # Not sure how to write a test for this
+    if len(errors) > 0:
+        outcome.issue.append(
+            OperationOutcomeIssue(
+                severity="fatal",
+                code="exception",
+                diagnostics=str(errors),
             )
-            status_code = 500
+        )
+        status_code = 500
 
     response = Bundle(
         type="transaction-response", entry=response_entries, issues=outcome
@@ -227,19 +238,21 @@ async def post__bundle(
     if status_code in [201, 202]:
         headers["Location"] = f"https://aced-idp.org/Bundle/{response.id}"
 
+    logger.info(f"[{status_code}] {response.dict()}")
     return JSONResponse(
         content=response.dict(), status_code=status_code, headers=headers
     )
 
 
-def validate_entry(request_entry: BundleEntry, error_details: dict) -> OperationOutcomeIssue:
+def validate_entry(request_entry: BundleEntry, error_details: dict, entry_dict: dict) -> OperationOutcomeIssue:
     """Validate a single entry, return issue or None"""
 
     if error_details is not None:
         return OperationOutcomeIssue(
             severity="error",
             code="structure",
-            diagnostics=str(error_details),
+            diagnostics=f"Validation error on {entry_dict.get('resource_type', None)} with id: {entry_dict.get('id', None)}",
+            details={"text": str(error_details)}
         )
 
     if request_entry.request.method not in ["PUT", "DELETE"]:
@@ -250,10 +263,19 @@ def validate_entry(request_entry: BundleEntry, error_details: dict) -> Operation
         )
 
     request_resource_id = request_entry.resource.id
-    if request_resource_id is None or not bool(UUID_PATTERN.match(request_resource_id)):
+    if request_resource_id is None:
         return OperationOutcomeIssue(
-                severity="error",
-                code="invariant", diagnostics="Resource missing id"
+            severity="error",
+            code="invariant",
+            diagnostics="Resource missing id",
+            details={"text": f"for resource {request_entry.resource}"}
+        )
+
+    if not bool(UUID_PATTERN.match(request_resource_id)):
+        return OperationOutcomeIssue(
+            severity="error",
+            code="invariant", diagnostics=f"Resource id {request_entry.resource.id} is not a UUID see\
+https://build.fhir.org/datatypes.html#uuid for details"
         )
 
     resource_type = request_entry.resource.resource_type
@@ -265,7 +287,9 @@ def validate_entry(request_entry: BundleEntry, error_details: dict) -> Operation
         )
     if not request_entry.resource.identifier:
         return OperationOutcomeIssue(
-            severity="error", code="required", diagnostics="Resource missing identifier"
+            severity="error",
+            code="required",
+            diagnostics=f"Missing identifier for {request_entry.resource.resource_type} with {request_entry.resource.id}",
         )
     return OperationOutcomeIssue(
         severity="success",
@@ -290,10 +314,10 @@ def validate_bundle_entries(body: dict) -> list[BundleEntry] | list[dict]:
                 **entry_dict
             )
         except ValidationError as e:
-            response_issue = validate_entry(None, error_details=e.json())
+            response_issue = validate_entry(None, error_details=e.json(), entry_dict=entry_dict)
 
         else:
-            response_issue = validate_entry(request_entry, error_details=None)
+            response_issue = validate_entry(request_entry, error_details=None, entry_dict=None)
 
         response_entry = BundleEntry()
         if response_issue.severity == "success":

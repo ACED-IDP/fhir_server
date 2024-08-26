@@ -119,58 +119,58 @@ def create_request_bundle(
 
 
 def test_write_bundle_no_data():
-    """A POST bundle without data should return a 422."""
-    response = client.post("/Bundle", json={}, headers=HEADERS)
+    """A PUT bundle without data should return a 422."""
+    response = client.put("/Bundle", json={}, headers=HEADERS)
     assert_bundle_response(response, 422, bundle_diagnostic="Bundle missing body")
 
 
 def test_write_bundle_no_auth_header():
-    """A POST bundle with data, but no Auth header should return a 401."""
-    response = client.post("/Bundle", json={"resourceType": "Bundle"})
+    """A PUT bundle with data, but no Auth header should return a 401."""
+    response = client.put("/Bundle", json={"resourceType": "Bundle"})
     assert_bundle_response(
         response, 401, bundle_diagnostic="Missing Authorization header"
     )
 
 
 def test_write_bundle_with_no_project_permissions():
-    """A POST with data but insufficient perms for the project that is being submitted to returns a 401"""
+    """A PUT with data but insufficient perms for the project that is being submitted to returns a 401"""
     request_bundle = create_request_bundle()
     request_bundle["identifier"]["value"] = "ohsu-this_proj_has_no_perms"
-    response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
+    response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(response, 403, bundle_diagnostic="/programs/ohsu/projects/this_proj_has_no_perms not found in user authz")
 
 
 def test_write_misc_resource():
-    """A POST bundle with data, but not a Bundle should return a 422."""
-    response = client.post("/Bundle", json={"resourceType": "Foo"}, headers=HEADERS)
+    """A PUT bundle with data, but not a Bundle should return a 422."""
+    response = client.put("/Bundle", json={"resourceType": "Foo"}, headers=HEADERS)
     assert_bundle_response(
         response, 422, bundle_diagnostic="Body must be a FHIR Bundle, not Foo"
     )
 
 
 def test_write_bundle_missing_entry():
-    """A POST bundle missing `entry` should return a 422."""
+    """A PUT bundle missing `entry` should return a 422."""
     request_bundle = create_request_bundle()
     del request_bundle["entry"]
-    response = client.post("/Bundle", json=request_bundle, headers=HEADERS)
+    response = client.put("/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(response, 422, bundle_diagnostic="Bundle missing entry")
 
     request_bundle = create_request_bundle()
     request_bundle["entry"] = []
-    response = client.post("/Bundle", json=request_bundle, headers=HEADERS)
+    response = client.put("/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(response, 422, bundle_diagnostic="Bundle missing entry")
 
 
 def test_write_bundle_missing_identifier():
-    """A POST bundle missing `identifier` should return a 422."""
+    """A PUT bundle missing `identifier` should return a 422."""
     request_bundle = create_request_bundle()
     del request_bundle["identifier"]
-    response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
+    response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(response, 422, bundle_diagnostic="Bundle missing identifier")
 
     request_bundle = create_request_bundle()
     request_bundle["identifier"] = {"system": "https://foo.bar", "value": "foo"}
-    response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
+    response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(
         response,
         422,
@@ -179,9 +179,9 @@ def test_write_bundle_missing_identifier():
 
 
 def test_write_content_larger_than_50MB():
-    """A POST bundle body that is larger than 50 BM should produce 422"""
+    """A PUT bundle body that is larger than 50 BM should produce 422"""
     request_bundle = create_request_bundle()
-    response = client.post(url="/Bundle", json=request_bundle, headers={"Authorization": f"{ACCESS_TOKEN}", "Content-Length": str(51*1024*1024)})
+    response = client.put(url="/Bundle", json=request_bundle, headers={"Authorization": f"{ACCESS_TOKEN}", "Content-Length": str(51*1024*1024)})
     assert_bundle_response(
         response,
         422,
@@ -192,7 +192,7 @@ def test_write_bundle_incorrect_method():
     """A POST bundle entry without PUT or DELETE should return a 422."""
     request_bundle = create_request_bundle()
     request_bundle["entry"][0]["request"]["method"] = "POST"
-    response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
+    response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(
         response,
         422,
@@ -201,37 +201,37 @@ def test_write_bundle_incorrect_method():
 
 
 def test_write_bundle_unsupported_resource():
-    """A POST bundle entry without an unsupported resource should return a 422."""
+    """A PUT bundle entry without an unsupported resource should return a 422."""
     request_bundle = create_request_bundle(resource=VALID_CLAIM)
     import pprint
 
     pprint.pprint(request_bundle)
-    response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
+    response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(response, 422, entry_diagnostic="Unsupported resource Claim")
 
 
 def test_write_bundle_patient_missing_identifier():
-    """A POST bundle entry.resource without identifier should produce 422."""
+    """A PUT bundle entry.resource without identifier should produce 422."""
     request_bundle = create_request_bundle(resource={"resourceType": "Patient", "id": "b7793c1a-690e-5b7b-8b5b-867555936d06"})
-    response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
+    response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(
-        response, 422, entry_diagnostic="Resource missing identifier"
+        response, 422, entry_diagnostic="Missing identifier for Patient with b7793c1a-690e-5b7b-8b5b-867555936d06"
     )
 
 
 def test_write_bundle_patient_missing_id():
-    """A POST bundle entry.resource without id should produce 422."""
+    """A PUT bundle entry.resource without id should produce 422."""
     request_bundle = create_request_bundle(resource={"resourceType": "Patient", "identifier":  [{"system": "https://example.org/my_id", "value": "test-foo"}]})
-    response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
+    response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(
         response, 422, entry_diagnostic="Resource missing id"
     )
 
 
 def test_write_bundle_simple_ok():
-    """A POST bundle without type should produce 201."""
+    """A PUT bundle without type should produce 201."""
     request_bundle = create_request_bundle()
-    response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
+    response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(response, 201)
     response_bundle = response.json()
     assert response_bundle["entry"][0]["response"]["status"] in [
@@ -244,10 +244,10 @@ def test_write_bundle_simple_ok():
 
 
 def test_write_bundle_missing_type():
-    """A POST bundle without type should produce 422."""
+    """A PUT bundle without type should produce 422."""
     request_bundle = create_request_bundle()
     del request_bundle["type"]
-    response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
+    response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(
         response,
         422,
@@ -256,43 +256,43 @@ def test_write_bundle_missing_type():
 
 
 def test_write_bundle_expired_token():
-    """A POST bundle with an expired token should produce a 401."""
+    """A PUT bundle with an expired token should produce a 401."""
     token = decode_token(ACCESS_TOKEN)
     token['exp'] = token['iat']
     expired_token = mock_encode_token(token)
     request_bundle = create_request_bundle()
-    response = client.post(url="/Bundle", json=request_bundle, headers={"Authorization": expired_token})
+    response = client.put(url="/Bundle", json=request_bundle, headers={"Authorization": expired_token})
     assert_bundle_response(response, 401, bundle_diagnostic="Token has expired")
 
 
 def test_write_partial_invalid_bundle_resources():
-    """A POST bundle with an invalid FHIR resource and a valid FHIR resource in the same bundle should produce 202 signifying a partial success for 1/2 entries"""
+    """A PUT bundle with an invalid FHIR resource and a valid FHIR resource in the same bundle should produce 202 signifying a partial success for 1/2 entries"""
     request_bundle = create_request_bundle()
     _ = copy.deepcopy(request_bundle["entry"][0])
     request_bundle["entry"].append(_)
     request_bundle["entry"][0]["resource"]["fewfwefewf"] = "dsfdfdsf"
-    response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
+    response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(response, 202, bundle_diagnostic="non fatal entry")
 
 
 def test_write_partial_invalid_bundle_method():
-    """A POST bundle with a valid method and an invalid POST method entry should produce 202 signifying a partial success for 1/2 entries"""
+    """A PUT bundle with a valid method and an invalid PUT method entry should produce 202 signifying a partial success for 1/2 entries"""
     request_bundle = create_request_bundle()
     _ = copy.deepcopy(request_bundle["entry"][0])
     request_bundle["entry"].append(_)
-    request_bundle["entry"][0]["request"] = {"method": "POST", "url": "Patient"},
-    response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
+    request_bundle["entry"][0]["request"] = {"method": "PUT", "url": "Patient"},
+    response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(response, 202, bundle_diagnostic="non fatal entry")
 
 
 def test_all_invalid_bundle_resources():
-    """A POST bundle with all invalid FHIR resources in the bundle should produce a 422 for all resources"""
+    """A PUT bundle with all invalid FHIR resources in the bundle should produce a 422 for all resources"""
     request_bundle = create_request_bundle()
     _ = copy.deepcopy(request_bundle["entry"][0])
     request_bundle["entry"].append(_)
     request_bundle["entry"][0]["resource"]["fewfwefewf"] = "dsfdfdsf"
     request_bundle["entry"][1]["resource"]["fewfwefewf"] = "dsfdfdsf"
-    response = client.post(url="/Bundle", json=request_bundle, headers=HEADERS)
+    response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(response, 422, bundle_diagnostic="non fatal entry")
 
 
