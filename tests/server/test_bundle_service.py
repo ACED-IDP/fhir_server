@@ -279,33 +279,48 @@ def test_all_invalid_bundle_resources(valid_bundle, valid_patient):
 
 
 def test_simple_delete(valid_bundle, valid_patient, valid_delete):
+    """A DELETE bundle with all valid resources should return a 201"""
     request_bundle = create_request_bundle(valid_bundle=valid_bundle, valid_resource=valid_patient)
     response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(response, 201)
 
     delete_bundle = create_delete_bundle(valid_delete, "Patient/b7793c1a-690e-5b7b-8b5b-867555936d06")
-    response = client.delete(url="/Bundle", json=delete_bundle, headers=HEADERS)
+    response = client.delete_with_payload(url="/Bundle", json=delete_bundle, headers=HEADERS)
     assert_bundle_response(response, 201)
 
 
 def test_delete_with_invalid_url_uuid(valid_bundle, valid_patient, valid_delete):
+    """A DELETE bundle with a malformed uuid should return 422"""
     request_bundle = create_request_bundle(valid_bundle=valid_bundle, valid_resource=valid_patient)
     response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(response, 201)
 
     delete_bundle = create_delete_bundle(valid_delete, "Patient/b7793c1a-690e-5bb-867555936d06")
-    response = client.delete(url="/Bundle", json=delete_bundle, headers=HEADERS)
+    response = client.delete_with_payload(url="/Bundle", json=delete_bundle, headers=HEADERS)
     assert_bundle_response(response, 422)
 
 
 def test_delete_with_invalid_url_resource(valid_bundle, valid_patient, valid_delete):
+    """A DELETE bundle referencing an unsupported resource type should return 422"""
     request_bundle = create_request_bundle(valid_bundle=valid_bundle, valid_resource=valid_patient)
     response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
     assert_bundle_response(response, 201)
 
     delete_bundle = create_delete_bundle(valid_delete, "Claim/b7793c1a-690e-5bb-867555936d06")
-    response = client.delete(url="/Bundle", json=delete_bundle, headers=HEADERS)
+    response = client.delete_with_payload(url="/Bundle", json=delete_bundle, headers=HEADERS)
     assert_bundle_response(response, 422)
+
+
+def test_delete_with_partial_valid_resource(valid_bundle, valid_patient, valid_delete):
+    """A DELETE bundle where one entry is valid but the other isn't should return a 202"""
+    request_bundle = create_request_bundle(valid_bundle=valid_bundle, valid_resource=valid_patient)
+    response = client.put(url="/Bundle", json=request_bundle, headers=HEADERS)
+    assert_bundle_response(response, 201)
+
+    delete_bundle = create_delete_bundle(valid_delete, "Patient/b7793c1a-690e-5b7b-8b5b-867555936d06")
+    delete_bundle["entry"].append({"request": {"method": "DELETE", "url": "Claim/b7793c1a-690e-5bb-867555936d06"}})
+    response = client.delete_with_payload(url="/Bundle", json=delete_bundle, headers=HEADERS)
+    assert_bundle_response(response, 202)
 
 
 def test_openapi_ui():
