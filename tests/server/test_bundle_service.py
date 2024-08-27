@@ -9,7 +9,14 @@ from requests import Response
 from bundle_service.main import app
 from gen3.auth import decode_token
 
-client = TestClient(app)
+
+class CustomTestClient(TestClient):
+    def delete_with_payload(self,  **kwargs):
+        return self.request(method="DELETE", **kwargs)
+
+
+client = CustomTestClient(app)
+
 
 ACCESS_TOKEN = os.environ.get('ACCESS_TOKEN', None)
 HEADERS = {"Authorization": f"{ACCESS_TOKEN}"}
@@ -58,7 +65,6 @@ def assert_bundle_response(
     response_bundle["issues"]["resourceType"] == "OperationOutcome", response_bundle[
         "issues"
     ]
-    # print(_)
     if bundle_diagnostic:
         actual_bundle_diagnostic = sorted(
             [_["diagnostics"] for _ in response_bundle["issues"]["issue"]]

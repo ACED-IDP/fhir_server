@@ -196,7 +196,8 @@ async def put__bundle(
         content=response.dict(), status_code=status_code, headers=FHIR_JSON_CONTENT_HEADERS
     )
 
-app.delete(
+
+@app.delete(
     "/Bundle",
     status_code=201,
     tags=["Submission"],
@@ -281,8 +282,6 @@ app.delete(
         }
     },
 )
-
-
 async def delete__bundle(
     access_token: Optional[str] = Header(None, alias="Authorization"),
     content_length: Optional[str] = Header(None, alias="Content-Length"),

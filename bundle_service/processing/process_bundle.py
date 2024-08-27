@@ -83,13 +83,13 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> list[
                 temp_files[file_name].write(orjson.dumps(row["resource"], option=orjson.OPT_APPEND_NEWLINE))
                 files_written = True
             elif row["request"]["method"] == "DELETE":
-                delete_body["vertices"].append(row["id"])
+                delete_body["vertices"].append(row["request"]["url"].split("/")[1])
 
         if len(delete_body["edges"]) > 0 or len(delete_body["vertices"]) > 0:
             res = bulk_delete("CALIPER", project_id=project_id, vertices=delete_body["vertices"],
                               edges=delete_body["edges"], output=logs, access_token=access_token)
-            if int(res[0]["status"]) != 200:
-                server_errors.append(res[0]["message"])
+            if int(res["status"]) != 200:
+                server_errors.append(res["message"])
 
             # TODO add elastic edge level deletion
             # take row ids, fetch records into RAM, for each index do a dataframe pivot,

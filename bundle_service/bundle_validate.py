@@ -83,7 +83,7 @@ def validate_entry(request_entry: BundleEntry, error_details: dict, entry_dict: 
     elif request_entry.request.method in ["DELETE"]:
         request_url = request_entry.request.url
         ref_split = request_url.split("/")
-        if len(ref_split != 2):
+        if len(ref_split) != 2:
             return OperationOutcomeIssue(
                 severity="error",
                 code="required",
