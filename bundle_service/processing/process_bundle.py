@@ -129,5 +129,4 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> list[
             except Exception as e:
                 server_errors.append(str(e))
 
-        print("Process Logs: ", logs)
         return server_errors
