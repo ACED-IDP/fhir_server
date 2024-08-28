@@ -2,12 +2,13 @@ import copy
 import os
 import json
 import base64
+import requests
 
 from fastapi.testclient import TestClient
 from requests import Response
 
 from bundle_service.main import app
-from gen3.auth import decode_token
+from gen3.auth import decode_token, endpoint_from_token
 
 
 class CustomTestClient(TestClient):
@@ -223,6 +224,17 @@ def test_write_bundle_simple_ok(valid_bundle, valid_patient):
     response.headers[
         "Location"
     ] == f'https://aced-idp.org/Bundle/{response_bundle["id"]}', "Response header Location should be set to the new Bundle ID"
+
+    vertex_id = request_bundle["entry"][0]["resource"]["id"]
+    project_id = request_bundle["identifier"]["value"]
+    endpoint = endpoint_from_token(ACCESS_TOKEN)
+    result = requests.get(f"{endpoint}/grip/writer/graphql/CALIPER/get-vertex/{vertex_id}/{project_id}",
+                            headers=HEADERS
+                            ).json()
+
+    print("RESULT: ", result)
+    print("ENTRY: ", request_bundle["entry"][0]["resource"])
+    assert result['data']['gid'] == vertex_id
 
 
 def test_write_bundle_missing_type(valid_bundle, valid_patient):
