@@ -33,3 +33,9 @@ gen3datamodel<3.0.2
 
 fastapi
 uvicorn[standard]
+
+#aced submission
+aced-submission==0.0.9rc31
+
+#gen3 tracker
+gen3-tracker==0.0.5rc4

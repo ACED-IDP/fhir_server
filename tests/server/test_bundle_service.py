@@ -1,5 +1,4 @@
 import copy
-import os
 import json
 import base64
 import requests
@@ -8,7 +7,11 @@ from fastapi.testclient import TestClient
 from requests import Response
 
 from bundle_service.main import app
-from gen3.auth import decode_token, endpoint_from_token
+from gen3.auth import decode_token, endpoint_from_token, Gen3Auth
+
+
+ACCESS_TOKEN = Gen3Auth().get_access_token()
+HEADERS = {"Authorization": f"{ACCESS_TOKEN}"}
 
 
 class CustomTestClient(TestClient):
@@ -17,10 +20,6 @@ class CustomTestClient(TestClient):
 
 
 client = CustomTestClient(app)
-
-
-ACCESS_TOKEN = os.environ.get('ACCESS_TOKEN', None)
-HEADERS = {"Authorization": f"{ACCESS_TOKEN}"}
 
 
 def test_read_main():
@@ -229,8 +228,8 @@ def test_write_bundle_simple_ok(valid_bundle, valid_patient):
     project_id = request_bundle["identifier"]["value"]
     endpoint = endpoint_from_token(ACCESS_TOKEN)
     result = requests.get(f"{endpoint}/grip/writer/graphql/CALIPER/get-vertex/{vertex_id}/{project_id}",
-                            headers=HEADERS
-                            ).json()
+                          headers=HEADERS
+                          ).json()
 
     print("RESULT: ", result)
     print("ENTRY: ", request_bundle["entry"][0]["resource"])
