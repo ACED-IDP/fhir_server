@@ -14,6 +14,7 @@ from gen3_tracker.meta.dataframer import LocalFHIRDatabase
 
 GRAPH_NAME = "CALIPER"
 
+
 async def _is_valid_token(access_token: str) -> bool | str:
     """The FHIR server needs some way of checking if the token is valid before passing it to gen3Auth"""
     try:
@@ -93,7 +94,6 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> list[
             if int(res["status"]) != 200:
                 server_errors.append(res["message"])
 
-
         for temp_file in temp_files.values():
             temp_file.close()
 
@@ -126,9 +126,9 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> list[
 
                 for index, generator in index_generator_dict.items():
                     load_flat(project_id=project_id, index=index,
-                            generator=generator(),
-                            limit=None, elastic_url=DEFAULT_ELASTIC,
-                            output_path=None)
+                              generator=generator(),
+                              limit=None, elastic_url=DEFAULT_ELASTIC,
+                              output_path=None)
 
                 logs = fhir_put(project_id, path=temp_dir,
                                 elastic_url=DEFAULT_ELASTIC)
