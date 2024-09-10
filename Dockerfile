@@ -31,8 +31,8 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2
 COPY ./requirements.txt /root
 Run pip install wheel yq \
     && pip install -r requirements.txt \
-    && pip install "aced-submission==0.0.9rc30" \
-    && pip install "gen3-tracker==0.0.5rc3"
+    && pip install "aced-submission==0.0.9rc35" \
+    && pip install "gen3-tracker==0.0.5rc8"
 
 ENV PYTHONUNBUFFERED=1
 RUN mkdir ~/.aws ~/.gen3 /root/studies
@@ -44,7 +44,7 @@ RUN git clone https://github.com/bmeg/iceberg.git && \
 COPY . /root
 
 #Add jsonschemagraph exe to image
-RUN wget https://github.com/bmeg/jsonschemagraph/releases/download/v0.0.1/jsonschemagraph-linux.amd64 -P /usr/local/bin/
+RUN wget https://github.com/bmeg/jsonschemagraph/releases/download/v0.0.2/jsonschemagraph-linux.amd64 -P /usr/local/bin/
 RUN mv /usr/local/bin/jsonschemagraph-linux.amd64 /usr/local/bin/jsonschemagraph
 RUN chmod +x /usr/local/bin/jsonschemagraph
 ENV PATH="/usr/local/bin:$PATH"

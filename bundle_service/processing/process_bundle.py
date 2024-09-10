@@ -3,14 +3,16 @@ import orjson
 import subprocess
 import os
 import time
+import traceback
 from typing import List
 from gen3.auth import Gen3Auth, decode_token
 
-from aced_submission.grip_load import bulk_load, bulk_delete
-from aced_submission.meta_flat_load import DEFAULT_ELASTIC, load_flat
+from aced_submission.grip_load import bulk_load, bulk_delete, list_labels, proto_stream_query
+from aced_submission.meta_flat_load import DEFAULT_ELASTIC, load_flat, delete as meta_flat_delete
 from aced_submission.fhir_store import fhir_put
 from gen3_tracker.meta.dataframer import LocalFHIRDatabase
 
+GRAPH_NAME = "CALIPER"
 
 async def _is_valid_token(access_token: str) -> bool | str:
     """The FHIR server needs some way of checking if the token is valid before passing it to gen3Auth"""
@@ -71,7 +73,7 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> list[
     server_errors = []
     temp_files = {}
     logs = {"logs": []}
-    delete_body = {"graph": "CALIPER", "edges": [], "vertices": []}
+    delete_body = {"graph": GRAPH_NAME, "edges": [], "vertices": []}
     files_written = False
     with tempfile.TemporaryDirectory() as temp_dir:
         for row in rows:
@@ -86,47 +88,54 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> list[
                 delete_body["vertices"].append(row["request"]["url"].split("/")[1])
 
         if len(delete_body["edges"]) > 0 or len(delete_body["vertices"]) > 0:
-            res = bulk_delete("CALIPER", project_id=project_id, vertices=delete_body["vertices"],
+            res = bulk_delete(GRAPH_NAME, project_id=project_id, vertices=delete_body["vertices"],
                               edges=delete_body["edges"], output=logs, access_token=access_token)
             if int(res["status"]) != 200:
                 server_errors.append(res["message"])
 
-            # TODO add elastic edge level deletion
-            # take row ids, fetch records into RAM, for each index do a dataframe pivot,
-            # delete resulting entries from each index depending on what the pivot produces
 
         for temp_file in temp_files.values():
             temp_file.close()
 
         if files_written:
             subprocess.run(["jsonschemagraph", "gen-dir", "iceberg/schemas/graph", f"{temp_dir}", f"{temp_dir}/OUT", "--project_id", f"{project_id}", "--gzip_files"])
-            res = bulk_load("CALIPER", project_id, f"{temp_dir}/OUT", logs, access_token)
+            res = bulk_load(GRAPH_NAME, project_id, f"{temp_dir}/OUT", logs, access_token)
             if int(res[0]["status"]) != 200:
                 server_errors.append(res[0]["message"])
 
             try:
                 db = LocalFHIRDatabase(db_name=f"{temp_dir}/local_fhir.db")
-                db.load_ndjson_from_dir(path=temp_dir)
+                for index in list_labels(GRAPH_NAME)["vertexLabels"]:
+                    data = {
+                            "query": [
+                                {"v": []},
+                                {"hasLabel": [index]}
+                            ]
+                    }
+                    db.bulk_insert_data(resources=proto_stream_query(GRAPH_NAME, data))
 
-                load_flat(project_id=project_id, index='researchsubject',
-                          generator=db.flattened_research_subjects(),
-                          limit=None, elastic_url=DEFAULT_ELASTIC,
-                          output_path=None)
+                index_generator_dict = {
+                    'researchsubject': db.flattened_research_subjects,
+                    'specimen': db.flattened_specimens,
+                    'file': db.flattened_document_references
+                }
 
-                load_flat(project_id=project_id, index='observation',
-                          generator=db.flattened_observations(),
-                          limit=None, elastic_url=DEFAULT_ELASTIC,
-                          output_path=None)
+                for index in index_generator_dict.keys():
+                    program, project = project_id.split("-")
+                    meta_flat_delete(project_id=f"{program}-{project}", index=index)
 
-                load_flat(project_id=project_id, index='file',
-                          generator=db.flattened_document_references(),
-                          limit=None, elastic_url=DEFAULT_ELASTIC,
-                          output_path=None)
+                for index, generator in index_generator_dict.items():
+                    load_flat(project_id=project_id, index=index,
+                            generator=generator(),
+                            limit=None, elastic_url=DEFAULT_ELASTIC,
+                            output_path=None)
 
                 logs = fhir_put(project_id, path=temp_dir,
                                 elastic_url=DEFAULT_ELASTIC)
 
             except Exception as e:
+                tb = traceback.format_exc()
+                server_errors.append(tb)
                 server_errors.append(str(e))
 
         return server_errors
