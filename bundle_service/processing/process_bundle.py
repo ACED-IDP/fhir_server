@@ -7,9 +7,8 @@ import traceback
 from typing import List
 from gen3.auth import Gen3Auth, decode_token
 
-from aced_submission.grip_load import bulk_load, bulk_delete, list_labels, proto_stream_query
+from aced_submission.grip_load import bulk_load, bulk_delete, get_project_data
 from aced_submission.meta_flat_load import DEFAULT_ELASTIC, load_flat, delete as meta_flat_delete
-from aced_submission.fhir_store import fhir_put
 from gen3_tracker.meta.dataframer import LocalFHIRDatabase
 
 GRAPH_NAME = "CALIPER"
@@ -103,39 +102,29 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> list[
             if int(res[0]["status"]) != 200:
                 server_errors.append(res[0]["message"])
 
-            try:
-                db = LocalFHIRDatabase(db_name=f"{temp_dir}/local_fhir.db")
-                for index in list_labels(GRAPH_NAME)["vertexLabels"]:
-                    data = {
-                            "query": [
-                                {"v": []},
-                                {"hasLabel": [index]}
-                            ]
-                    }
-                    db.bulk_insert_data(resources=proto_stream_query(GRAPH_NAME, data))
+        try:
+            db = LocalFHIRDatabase(db_name=f"{temp_dir}/local_fhir.db")
+            db.bulk_insert_data(resources=get_project_data(GRAPH_NAME, project_id, logs, access_token))
 
-                index_generator_dict = {
-                    'researchsubject': db.flattened_research_subjects,
-                    'specimen': db.flattened_specimens,
-                    'file': db.flattened_document_references
-                }
+            index_generator_dict = {
+                'researchsubject': db.flattened_research_subjects,
+                'specimen': db.flattened_specimens,
+                'file': db.flattened_document_references
+            }
 
-                for index in index_generator_dict.keys():
-                    program, project = project_id.split("-")
-                    meta_flat_delete(project_id=f"{program}-{project}", index=index)
+            for index in index_generator_dict.keys():
+                program, project = project_id.split("-")
+                meta_flat_delete(project_id=f"{program}-{project}", index=index)
 
-                for index, generator in index_generator_dict.items():
-                    load_flat(project_id=project_id, index=index,
-                              generator=generator(),
-                              limit=None, elastic_url=DEFAULT_ELASTIC,
-                              output_path=None)
+            for index, generator in index_generator_dict.items():
+                load_flat(project_id=project_id, index=index,
+                        generator=generator(),
+                        limit=None, elastic_url=DEFAULT_ELASTIC,
+                        output_path=None)
 
-                logs = fhir_put(project_id, path=temp_dir,
-                                elastic_url=DEFAULT_ELASTIC)
-
-            except Exception as e:
-                tb = traceback.format_exc()
-                server_errors.append(tb)
-                server_errors.append(str(e))
+        except Exception as e:
+            tb = traceback.format_exc()
+            server_errors.append(tb)
+            server_errors.append(str(e))
 
         return server_errors
