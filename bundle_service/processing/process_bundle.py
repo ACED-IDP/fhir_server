@@ -11,7 +11,19 @@ from aced_submission.grip_load import bulk_load, bulk_delete, get_project_data
 from aced_submission.meta_flat_load import DEFAULT_ELASTIC, load_flat, delete as meta_flat_delete
 from gen3_tracker.meta.dataframer import LocalFHIRDatabase
 
-GRAPH_NAME = "CALIPER"
+
+async def _get_grip_service_name() -> str | None:
+    """Get GRIP_SERVICE_NAME from environment"""
+    graph_name = os.environ.get('GRIP_SERVICE_NAME', None)
+    assert graph_name is not None, "check GRIP_SERVICE_NAME env in helm chart. env var is None"
+    return os.environ.get('GRIP_SERVICE_NAME', None)
+
+
+async def _get_grip_graph_name() -> str | None:
+    """Get GRIP_GRAPH_NAME from environment"""
+    graph_name = os.environ.get('GRIP_GRAPH_NAME', None)
+    assert graph_name is not None, "check GRIP_GRAPH_NAME env in helm chart. env var is None"
+    return graph_name
 
 
 async def _is_valid_token(access_token: str) -> bool | str:
@@ -73,7 +85,7 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> list[
     server_errors = []
     temp_files = {}
     logs = {"logs": []}
-    delete_body = {"graph": GRAPH_NAME, "edges": [], "vertices": []}
+    delete_body = {"graph": await _get_grip_graph_name(), "edges": [], "vertices": []}
     files_written = False
     with tempfile.TemporaryDirectory() as temp_dir:
         for row in rows:
@@ -88,7 +100,7 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> list[
                 delete_body["vertices"].append(row["request"]["url"].split("/")[1])
 
         if len(delete_body["edges"]) > 0 or len(delete_body["vertices"]) > 0:
-            res = bulk_delete(GRAPH_NAME, project_id=project_id, vertices=delete_body["vertices"],
+            res = bulk_delete(await _get_grip_service_name(), await _get_grip_graph_name(), project_id=project_id, vertices=delete_body["vertices"],
                               edges=delete_body["edges"], output=logs, access_token=access_token)
             if int(res["status"]) != 200:
                 server_errors.append(res["message"])
@@ -98,13 +110,13 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> list[
 
         if files_written:
             subprocess.run(["jsonschemagraph", "gen-dir", "iceberg/schemas/graph", f"{temp_dir}", f"{temp_dir}/OUT", "--project_id", f"{project_id}", "--gzip_files"])
-            res = bulk_load(GRAPH_NAME, project_id, f"{temp_dir}/OUT", logs, access_token)
+            res = bulk_load(await _get_grip_service_name(), await _get_grip_graph_name(), project_id, f"{temp_dir}/OUT", logs, access_token)
             if int(res[0]["status"]) != 200:
                 server_errors.append(res[0]["message"])
 
         try:
             db = LocalFHIRDatabase(db_name=f"{temp_dir}/local_fhir.db")
-            db.bulk_insert_data(resources=get_project_data(GRAPH_NAME, project_id, logs, access_token))
+            db.bulk_insert_data(resources=get_project_data(await _get_grip_service_name(), await _get_grip_graph_name(), project_id, logs, access_token))
 
             index_generator_dict = {
                 'researchsubject': db.flattened_research_subjects,
