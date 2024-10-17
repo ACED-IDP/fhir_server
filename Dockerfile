@@ -30,9 +30,7 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2
 
 COPY ./requirements.txt /root
 Run pip install wheel yq \
-    && pip install -r requirements.txt \
-    && pip install "aced-submission==0.0.9rc36" \
-    && pip install "gen3-tracker==0.0.5rc8"
+    && pip install -r requirements.txt
 
 ENV PYTHONUNBUFFERED=1
 RUN mkdir ~/.aws ~/.gen3 /root/studies

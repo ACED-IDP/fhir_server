@@ -38,4 +38,4 @@ uvicorn[standard]
 aced-submission==0.0.9rc37
 
 #gen3 tracker
-gen3-tracker==0.0.5rc4
+gen3-tracker==0.0.5rc11
