@@ -6,28 +6,15 @@ from typing import Optional, Any
 
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
+from cdislogging import get_logger
+from fhir.resources.bundle import Bundle
+from fhir.resources.operationoutcome import OperationOutcomeIssue
 
-import logging
+from bundle_service import FHIR_JSON_CONTENT_HEADERS
+from bundle_service.processing.process_bundle import process
+from bundle_service.bundle_validate import validate_bundle_entries, validate_bundle, _any_fatal_issues
 
-from fhir.resources.bundle import Bundle, BundleEntry, BundleEntryResponse
-from fhir.resources.operationoutcome import OperationOutcome, OperationOutcomeIssue
-
-logger = logging.getLogger(__name__)
-
-valid_resource_types = [
-    "ResearchStudy",
-    "Patient",
-    "ResearchSubject",
-    "Substance",
-    "Specimen",
-    "Observation",
-    "Condition",
-    "Medication",
-    "MedicationAdministration",
-    "DocumentReference",
-    "Task",
-    "FamilyMemberHistory",
-]
+logger = get_logger("fhir_server", log_level="info")
 
 tags_metadata = [
     {
@@ -55,7 +42,7 @@ app = FastAPI(
 )
 
 
-@app.post(
+@app.put(
     "/Bundle",
     # response_model=Any,
     # responses={"default": {"model": Any}},
@@ -84,6 +71,17 @@ app = FastAPI(
                     }
                 },
             },
+            202: {
+                "description": "Accepted",
+                "content": {
+                    "application/json+fhir": {
+                        "schema": {
+                            "type": "object",
+                            "description": "Some of the entries in the bundle were rejected",
+                        }
+                    }
+                },
+            },
             422: {
                 "description": "Unprocessable Entity",
                 "content": {
@@ -96,7 +94,7 @@ app = FastAPI(
                 },
             },
             401: {
-                "description": "Security Error",
+                "description": "Unauthorized",
                 "content": {
                     "application/json+fhir": {
                         "schema": {
@@ -106,11 +104,34 @@ app = FastAPI(
                     }
                 },
             },
+            403: {
+                 "description": "Forbidden",
+                 "content": {
+                     "application/json+fhir": {
+                         "schema": {
+                             "type": "object",
+                             "description": " User is Forbidden from executing operation",
+                         }
+                     }
+                 },
+             },
+            500: {
+                 "description": "Internal Server Error",
+                 "content": {
+                     "application/json+fhir": {
+                         "schema": {
+                             "type": "object",
+                             "description": "Server encountered a problem while loading the bundle",
+                         }
+                     }
+                 },
+             },
         }
     },
 )
-async def post__bundle(
-    authorization: Optional[str] = Header(None, alias="Authorization"),
+async def put__bundle(
+    access_token: Optional[str] = Header(None, alias="Authorization"),
+    content_length: Optional[str] = Header(None, alias="Content-Length"),
     body: Request = None,
 ) -> Any:
     """
@@ -124,173 +145,211 @@ async def post__bundle(
 
     body_dict = await body.json()
 
-    # validate bundle as a whole
-    outcome = validate_bundle(body_dict, authorization)
+    # Look for fatal issues in non-entry Bundle metadata
+    outcome = await validate_bundle(body_dict, access_token, content_length)
 
-    # validate each entry in the bundle
-    response_entries = validate_bundle_entries(body_dict)
+    fatal_issues, status_code, response = await _any_fatal_issues(outcome)
+    if fatal_issues:
+        return JSONResponse(
+            content=response.dict(), status_code=status_code,
+            headers=FHIR_JSON_CONTENT_HEADERS
+        )
 
-    # set status code
+    # Fetch project id and validate each entry in the bundle.
+    response_entries, valid_fhir_rows, project_id = validate_bundle_entries(body_dict)
+
     status_code = 201
-    headers = {"Content-Type": "application/fhir+json"}
-    for response_entry in response_entries:
-        if response_entry.response.status != "200":
-            status_code = 422
-            break
-    if outcome.issue:
-        status_code = 422
-        if len([_.code for _ in outcome.issue if _.code == "security"]):
-            status_code = 401
 
-    # TODO process each entry in the bundle, save request_bundle
+    """This code block aims to capture partial issue severity error bundles where
+    some resources are improperly formatted, but others can be executed"""
+    invalid_entries = [elem.response.status != "200" for elem in response_entries]
+    if any(invalid_entries):
+        status_code = 202
+        if all(invalid_entries):
+            status_code = 422
+
+    errors = await process(valid_fhir_rows, project_id, access_token)
+    # Not sure how to write a test for this
+    if len(errors):
+        outcome.issue.append(
+            OperationOutcomeIssue(
+                severity="fatal",
+                code="exception",
+                diagnostics=str(errors),
+            )
+        )
+        status_code = 500
+
     response = Bundle(
         type="transaction-response", entry=response_entries, issues=outcome
     )
     response.id = str(uuid.uuid4())
+
+    # Not sure what this is doing
     Bundle.validate(response)
 
-    if status_code == 201:
-        headers["Location"] = f"https://aced-idp.org/Bundle/{response.id}"
+    if status_code in [201, 202]:
+        FHIR_JSON_CONTENT_HEADERS["Location"] = f"https://aced-idp.org/Bundle/{response.id}"
 
+    logger.info(f"[{status_code}] {response.dict()}")
     return JSONResponse(
-        content=response.dict(), status_code=status_code, headers=headers
+        content=response.dict(), status_code=status_code, headers=FHIR_JSON_CONTENT_HEADERS
     )
 
 
-def validate_entry(request_entry: BundleEntry) -> OperationOutcomeIssue:
-    """Validate a single entry, return issue or None"""
-    if request_entry.request.method not in ["PUT", "DELETE"]:
-        return OperationOutcomeIssue(
-            severity="error",
-            code="invariant",
-            diagnostics=f"Invalid entry.method {request_entry.request.method} for entry {request_entry.fullUrl}, must be PUT or DELETE",
-        )
-    resource_type = request_entry.resource.resource_type
-    if resource_type not in valid_resource_types:
-        return OperationOutcomeIssue(
-            severity="error",
-            code="invariant",
-            diagnostics=f"Unsupported resource {resource_type}",
-        )
-    if not request_entry.resource.identifier:
-        return OperationOutcomeIssue(
-            severity="error", code="required", diagnostics="Resource missing identifier"
-        )
-    return OperationOutcomeIssue(
-        severity="success",
-        code="success",
-        diagnostics="Valid entry",
-    )
-
-
-def validate_bundle_entries(body: dict) -> list[BundleEntry]:
-    """Ensure bundle entries are valid for our use case, Messages relating to the processing of individual entries (e.g. in a batch or transaction) SHALL be reported in the entry.response.outcome for that entry.
-    https://hl7.org/fhir/R5/bundle-definitions.html#Bundle.issues
-    raise HTTPException if not"""
-
-    response_entries = []
-    request_entries = body.get("entry", [])
-    for entry_dict in request_entries:
-        request_entry = BundleEntry(
-            **entry_dict
-        )  # TODO - this can be invalid, capture issue
-        response_entry = BundleEntry()
-        response_issue = validate_entry(request_entry)
-        if response_issue.severity == "success":
-            response_status = "200"
-        else:
-            response_status = "422"
-        response_entry.response = BundleEntryResponse(status=response_status)
-        response_entry.response.outcome = OperationOutcome(issue=[response_issue])
-        response_entries.append(response_entry)
-
-    return response_entries
-
-
-def validate_bundle(body: dict, authorization: str) -> OperationOutcome:
-    """Ensure bundle is valid for our use case, These issues and warnings must apply to the Bundle as a whole, not to individual entries.
-    see https://hl7.org/fhir/R5/bundle-definitions.html#Bundle.issues
+@app.delete(
+    "/Bundle",
+    status_code=201,
+    tags=["Submission"],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json+fhir": {
+                    "schema": {
+                        "type": "object",
+                        "description": """FHIR [Bundle](https://hl7.org/fhir/R5/bundle.html)"""
+                    }
+                }
+            }
+        },
+        "responses": {
+            201: {
+                "description": "Created",
+                "content": {
+                    "application/json+fhir": {
+                        "schema": {
+                            "type": "object",
+                            "description": "FHIR [Bundle](https://hl7.org/fhir/R5/bundle.html)",
+                        }
+                    }
+                },
+            },
+            202: {
+                "description": "Accepted",
+                "content": {
+                    "application/json+fhir": {
+                        "schema": {
+                            "type": "object",
+                            "description": "Some of the entries in the bundle were rejected",
+                        }
+                    }
+                },
+            },
+            422: {
+                "description": "Unprocessable Entity",
+                "content": {
+                    "application/json+fhir": {
+                        "schema": {
+                            "type": "object",
+                            "description": "FHIR [OperationOutcome](https://hl7.org/fhir/R5/operationoutcome.html) issues that apply to [Bundle](https://hl7.org/fhir/R5/bundle-definitions.html#Bundle.issues) or [Entry](https://hl7.org/fhir/R5/bundle-definitions.html#Bundle.entry.response.outcome)",
+                        }
+                    }
+                },
+            },
+            401: {
+                "description": "Unauthorized",
+                "content": {
+                    "application/json+fhir": {
+                        "schema": {
+                            "type": "object",
+                            "description": "Authorization header issue",
+                        }
+                    }
+                },
+            },
+            403: {
+                 "description": "Forbidden",
+                 "content": {
+                     "application/json+fhir": {
+                         "schema": {
+                             "type": "object",
+                             "description": " User is Forbidden from executing operation",
+                         }
+                     }
+                 },
+             },
+            500: {
+                 "description": "Internal Server Error",
+                 "content": {
+                     "application/json+fhir": {
+                         "schema": {
+                             "type": "object",
+                             "description": "Server encountered a problem while loading the bundle",
+                         }
+                     }
+                 },
+             },
+        }
+    },
+)
+async def delete__bundle(
+    access_token: Optional[str] = Header(None, alias="Authorization"),
+    content_length: Optional[str] = Header(None, alias="Content-Length"),
+    body: Request = None,
+) -> Any:
     """
-    outcome = OperationOutcome(issue=[])
-    if body is None or body == {}:
-        outcome.issue.append(
-            OperationOutcomeIssue(
-                severity="error",
-                code="required",
-                diagnostics="Bundle missing body",
-            )
+    Delete a FHIR Bundle.\n
+    * The FHIR Bundle must be of [type](https://hl7.org/fhir/R5/bundle-definitions.html#Bundle.type) `transaction` and contain a `https://aced-idp.org/project_id` identifier.\n
+    * Bundle entry [method](https://hl7.org/fhir/R5/bundle-definitions.html#Bundle.entry.request.method) must be of type `PUT` or `DELETE`.\n
+    * Entry [resource](https://hl7.org/fhir/R5/bundle-definitions.html#Bundle.entry.resource) must be one of the `supported types` [here](https://github.com/ACED-IDP/submission/wiki/Submission#valid-resource-types).\n
+    """
+
+    body_dict = await body.json()
+    outcome = await validate_bundle(body_dict, access_token, content_length)
+
+    fatal_issues, status_code, response = await _any_fatal_issues(outcome)
+    if fatal_issues:
+        return JSONResponse(
+            content=response.dict(), status_code=status_code,
+            headers=FHIR_JSON_CONTENT_HEADERS
         )
 
-    if authorization is None:
+    response_entries, valid_fhir_rows, project_id = validate_bundle_entries(body_dict)
+    status_code = 201
+
+    """This code block aims to capture partial issue severity error bundles where
+    some resources are improperly formatted, but others can be executed"""
+    invalid_entries = [elem.response.status != "200" for elem in response_entries]
+    if any(invalid_entries):
+        status_code = 202
+        if all(invalid_entries):
+            status_code = 422
+
+    errors = await process(valid_fhir_rows, project_id, access_token)
+    # Not sure how to write a test for this
+    if len(errors):
         outcome.issue.append(
             OperationOutcomeIssue(
-                severity="error",
-                code="security",
-                diagnostics="Missing Authorization header",
+                severity="fatal",
+                code="exception",
+                diagnostics=str(errors),
             )
         )
+        status_code = 500
 
-    _ = body.get("resourceType", None)
-    if _ != "Bundle":
-        outcome.issue.append(
-            OperationOutcomeIssue(
-                severity="error",
-                code="required",
-                diagnostics=f"Body must be a FHIR Bundle, not {_}",
-            )
-        )
+    response = Bundle(
+        type="transaction-response", entry=response_entries, issues=outcome
+    )
+    response.id = str(uuid.uuid4())
 
-    _ = body.get("type", None)
-    if _ != "transaction":
-        outcome.issue.append(
-            OperationOutcomeIssue(
-                severity="error",
-                code="required",
-                diagnostics=f"Bundle must be of type `transaction`, not {_}",
-            )
-        )
+    # Not sure what this is doing
+    Bundle.validate(response)
 
-    identifier = body.get("identifier", None)
-    project_id = None
-    if identifier is None:
-        outcome.issue.append(
-            OperationOutcomeIssue(
-                severity="error",
-                code="required",
-                diagnostics="Bundle missing identifier",
-            )
-        )
+    if status_code in [201, 202]:
+        FHIR_JSON_CONTENT_HEADERS["Location"] = f"https://aced-idp.org/Bundle/{response.id}"
 
-    if (
-        identifier
-        and identifier.get("system", None) == "https://aced-idp.org/project_id"
-    ):
-        project_id = identifier.get("value", None)
-    if not project_id:
-        outcome.issue.append(
-            OperationOutcomeIssue(
-                severity="error",
-                code="required",
-                diagnostics="Bundle missing identifier https://aced-idp.org/project_id",
-            )
-        )
-
-    _ = body.get("entry", None)
-    if _ is None or _ == []:
-        outcome.issue.append(
-            OperationOutcomeIssue(
-                severity="error",
-                code="required",
-                diagnostics="Bundle missing entry",
-            )
-        )
-
-    return outcome
+    logger.info(f"[{status_code}] {response.dict()}")
+    return JSONResponse(
+        content=response.dict(), status_code=status_code, headers=FHIR_JSON_CONTENT_HEADERS
+    )
 
 
 @app.get("/_status", response_model=None, tags=["System"])
-def get__status() -> None:
+def get__status() -> Any:
     """
     Returns if service is healthy or not
     """
+    return JSONResponse(
+            content={"Message": "Feeling good!"}, status_code=200, headers={"Content-Type": "application/json"}
+    )
     pass
