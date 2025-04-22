@@ -78,7 +78,7 @@ setup(
         'License :: OSI Approved :: MIT License',
 
         # Specify the Python versions you support here.
-        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.12',
     ],
 
     # This field adds keywords for your project which will appear on the
@@ -137,7 +137,7 @@ setup(
     # maintainers, and where to support the project financially. The key is
     # what's used to render the link text on PyPI.
     project_urls={  # Optional
-        'Bug Reports': 'https://github.com/ACED-IDP/aced_submission/issues',
-        'Source': 'https://github.com/ACED-IDP/aced_submission',
+        'Bug Reports': 'https://github.com/ACED-IDP/fhir_server/issues',
+        'Source': 'https://github.com/ACED-IDP/fhir_server',
     },
 )
