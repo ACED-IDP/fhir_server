@@ -37,7 +37,7 @@ RUN mkdir ~/.aws ~/.gen3 /root/studies
 
 RUN git clone https://github.com/bmeg/iceberg.git && \
 	cd iceberg && \
-	git checkout feature/FHIR-resource-type
+	git checkout 7f6cfdb558d05370fc645b5ab894b98b38a01e1b
 
 COPY . /root
 
