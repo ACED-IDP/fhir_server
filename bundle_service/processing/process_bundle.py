@@ -116,7 +116,7 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> list[
 
         try:
             db = LocalFHIRDatabase(db_name=f"{temp_dir}/local_fhir.db")
-            db.bulk_insert_data(resources=get_project_data(await _get_grip_service_name(), await _get_grip_graph_name(), project_id, logs, access_token))
+            db.bulk_insert_data(resources=get_project_data(await _get_grip_service_name(), await _get_grip_graph_name(), project_id, logs, access_token, 1024*1024))
 
             index_generator_dict = {
                 'researchsubject': db.flattened_research_subjects,
