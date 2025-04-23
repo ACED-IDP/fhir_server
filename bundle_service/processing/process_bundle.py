@@ -109,7 +109,9 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> list[
             temp_file.close()
 
         if files_written:
-            subprocess.run(["jsonschemagraph", "gen-dir", "iceberg/schemas/graph", f"{temp_dir}", f"{temp_dir}/OUT", "--project_id", f"{project_id}", "--gzip_files"])
+            program, project =project_id.split("-")
+            project_str_dict = f'{{"auth_resource_path":"/programs/{program}/projects/{project}"}}'
+            subprocess.run(["jsonschemagraph", "gen-dir", "iceberg/schemas/graph", f"{temp_dir}", f"{temp_dir}/OUT", "--extraArgs", f"{project_str_dict}", "--gzip_files"])
             res = bulk_load(await _get_grip_service_name(), await _get_grip_graph_name(), project_id, f"{temp_dir}/OUT", logs, access_token)
             if int(res[0]["status"]) != 200:
                 server_errors.append(res[0]["message"])
