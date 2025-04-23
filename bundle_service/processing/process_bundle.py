@@ -73,7 +73,7 @@ async def _can_create(access_token: str, project_id: str) -> bool | str | int:
     return True, f"HAS SERVICE create on resource {required_service}", None
 
 
-async def process(rows: List[dict], project_id: str, access_token: str) -> list[str]:
+async def process(rows: List[dict], project_id: str, access_token: str) -> List[str] | None:
     """Processes a bundle into a temp directory of NDJSON files
     that are compatible with existing loading functions
 
@@ -111,7 +111,7 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> list[
         if files_written:
             program, project =project_id.split("-")
             project_str_dict = f'{{"auth_resource_path":"/programs/{program}/projects/{project}"}}'
-            subprocess.run(["jsonschemagraph", "gen-dir", "iceberg/schemas/graph", f"{temp_dir}", f"{temp_dir}/OUT", "--extraArgs", f"{project_str_dict}", "--gzip_files"])
+            subprocess.run(["jsonschemagraph", "gen-dir", "iceberg/schemas/graph", f"{temp_dir}", f"{temp_dir}/OUT", "--extraArgs", project_str_dict, "--gzip_files"])
             res = bulk_load(await _get_grip_service_name(), await _get_grip_graph_name(), project_id, f"{temp_dir}/OUT", logs, access_token)
             if int(res[0]["status"]) != 200:
                 server_errors.append(res[0]["message"])

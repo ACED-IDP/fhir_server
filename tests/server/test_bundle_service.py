@@ -227,13 +227,13 @@ def test_write_bundle_simple_ok(valid_bundle, valid_patient):
     vertex_id = request_bundle["entry"][0]["resource"]["id"]
     project_id = request_bundle["identifier"]["value"]
     endpoint = endpoint_from_token(ACCESS_TOKEN)
-    result = requests.get(f"{endpoint}/grip/writer/graphql/CALIPER/get-vertex/{vertex_id}/{project_id}",
+    result = requests.get(f"{endpoint}/grip/writer/CALIPER/get-vertex/{vertex_id}/{project_id}",
                           headers=HEADERS
                           ).json()
 
     print("RESULT: ", result)
     print("ENTRY: ", request_bundle["entry"][0]["resource"])
-    assert result['data']['gid'] == vertex_id
+    assert result['data']['id'] == vertex_id
 
 
 def test_write_bundle_missing_type(valid_bundle, valid_patient):
