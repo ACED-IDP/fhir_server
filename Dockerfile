@@ -37,12 +37,12 @@ RUN mkdir ~/.aws ~/.gen3 /root/studies
 
 RUN git clone https://github.com/bmeg/iceberg.git && \
 	cd iceberg && \
-	git checkout feature/FHIR-resource-type
+	git checkout 7f6cfdb558d05370fc645b5ab894b98b38a01e1b
 
 COPY . /root
 
 #Add jsonschemagraph exe to image
-RUN wget https://github.com/bmeg/jsonschemagraph/releases/download/v0.0.2/jsonschemagraph-linux.amd64 -P /usr/local/bin/
+RUN wget https://github.com/bmeg/jsonschemagraph/releases/download/v0.0.3/jsonschemagraph-linux.amd64 -P /usr/local/bin/
 RUN mv /usr/local/bin/jsonschemagraph-linux.amd64 /usr/local/bin/jsonschemagraph
 RUN chmod +x /usr/local/bin/jsonschemagraph
 ENV PATH="/usr/local/bin:$PATH"

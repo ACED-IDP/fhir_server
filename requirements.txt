@@ -35,7 +35,7 @@ fastapi
 uvicorn[standard]
 
 #aced submission
-aced-submission==0.0.9rc37
+aced-submission==0.0.10rc11
 
 #gen3 tracker
-gen3-tracker==0.0.5rc11
+gen3-tracker==0.0.7rc13
