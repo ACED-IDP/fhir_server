@@ -42,7 +42,7 @@ RUN git clone https://github.com/bmeg/iceberg.git && \
 COPY . /root
 
 #Add jsonschemagraph exe to image
-RUN wget https://github.com/bmeg/jsonschemagraph/releases/download/v0.0.2/jsonschemagraph-linux.amd64 -P /usr/local/bin/
+RUN wget https://github.com/bmeg/jsonschemagraph/releases/download/v0.0.3/jsonschemagraph-linux.amd64 -P /usr/local/bin/
 RUN mv /usr/local/bin/jsonschemagraph-linux.amd64 /usr/local/bin/jsonschemagraph
 RUN chmod +x /usr/local/bin/jsonschemagraph
 ENV PATH="/usr/local/bin:$PATH"
