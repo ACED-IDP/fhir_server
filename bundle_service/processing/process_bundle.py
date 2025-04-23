@@ -109,12 +109,27 @@ async def process(rows: List[dict], project_id: str, access_token: str) -> List[
             temp_file.close()
 
         if files_written:
-            program, project =project_id.split("-")
+            program, project = project_id.split("-")
             project_str_dict = f'{{"auth_resource_path":"/programs/{program}/projects/{project}"}}'
-            subprocess.run(["jsonschemagraph", "gen-dir", "iceberg/schemas/graph", f"{temp_dir}", f"{temp_dir}/OUT", "--extraArgs", project_str_dict, "--gzip_files"])
-            res = bulk_load(await _get_grip_service_name(), await _get_grip_graph_name(), project_id, f"{temp_dir}/OUT", logs, access_token)
-            if int(res[0]["status"]) != 200:
-                server_errors.append(res[0]["message"])
+            print(f"Using project: {project_str_dict}")
+            result = subprocess.run(
+                ["jsonschemagraph", "gen-dir", "iceberg/schemas/graph", f"{temp_dir}", f"{temp_dir}/OUT", "--extraArgs", project_str_dict, "--gzip_files"],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            if result.returncode == 0:
+                print("jsonschemagraph ran successfully.")
+                res = bulk_load(await _get_grip_service_name(), await _get_grip_graph_name(), project_id, f"{temp_dir}/OUT", logs, access_token)
+                if int(res[0]["status"]) != 200:
+                    server_errors.append(res[0]["message"])
+            else:
+                print(f"jsonschemagraph failed with exit code: {result.returncode}")
+                print("Stdout:")
+                print(result.stdout)
+                print("Stderr:")
+                print(result.stderr)
+                server_errors.append(f"jsonschemagraph failed: {result.stderr.strip()}")
 
         try:
             db = LocalFHIRDatabase(db_name=f"{temp_dir}/local_fhir.db")
